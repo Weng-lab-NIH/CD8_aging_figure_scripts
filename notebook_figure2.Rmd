@@ -1,0 +1,570 @@
+---
+title: "Figure2"
+author: "Raheel R Ahmad"
+output: html_notebook
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+
+# R libraries
+library(tidyverse)
+library(Seurat)
+library(reshape2)
+library(lme4)
+library(broom.mixed)
+library(lmerTest)
+require(doParallel)
+require(parallel)
+require(foreach)
+library(ReactomePA)
+library(clusterProfiler)
+library(ComplexHeatmap)
+library(circlize)
+
+# external scripts (in /scripts folder on GitHub repo)
+source("/gpfs/gsfs5/users/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/regression_functions.R")
+source('/gpfs/gsfs5/users/TCR/__SCRIPTS_Raheel/scripts-Sequencing/GeneSetEnrichment_functions.R')
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Sequencing/GeneSetEnrichment_functions.R')
+
+# Data Repo
+working_directory <- './data-repo/'
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
+#setwd(working_directory)
+
+```
+
+```{r}
+# VERSION: 5.1.0_Regression_ClusterDistribution; PREVIOUS: ; STEP: Figure2
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+ptm <- proc.time() # Start the clock!
+
+set.seed(1)
+
+# Figure2A
+# LOAD DATA:
+# TRANSFORM DATA:
+# SAVE DATA:
+
+print('script 5.0.6 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+
+```{r Figure2A/B}
+# VERSION: 5.1.0_Regression_ClusterDistribution; PREVIOUS: ; STEP: Figure2
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+ptm <- proc.time() # Start the clock!
+
+set.seed(1)
+
+# Figure2A
+# LOAD DATA:
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
+
+info <- read_csv('/data/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000)
+pheno <- read_csv('/data/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv', guess_max = 100000)[2:10,]
+df <- info %>% inner_join(pheno, by = 'cluster')
+df[df$Age == 0.1,]$Age <- 0 # 0.1 was used to differentiate/order individuals
+df[df$Age == 83.1,]$Age <- 83 # 83.1 was used to differentiate/order individuals
+
+version<- "5.1.0"
+prev <- ""
+fig2out <- "/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig2_out/"
+
+# TRANSFORM DATA:
+
+clust.dist <- df %>% group_by(Code,cluster,Age,Sex) %>% filter(cluster != 6 & BC_ID != 1 & BC_ID != 2) %>% 
+  summarize(num = n()) %>% group_by(Code) %>% mutate(norm = num *100 / sum(num))
+
+# Perform Regression for each cluster:
+summary <- tibble()
+for (clust in unique(clust.dist$cluster)) {
+  regression <- clust.dist %>% filter(cluster == clust)
+  model <- lm(norm~Age+Sex, regression) # Note: this is the linear model generated, change this to preferred model if necessary
+  age_p <- summary(model)$coefficients[,4]["Age"]
+  co <- summary(model)$coefficients[,1]["Age"]
+  sex_p <- summary(model)$coefficients[,4]["SexM"]
+  co_sex <- summary(model)$coefficients[,1]["SexM"]
+  intercept <- summary(model)$coefficients[,1]["(Intercept)"]
+  r2 <- summary(model)$r.squared
+  adj_r2 <- summary(model)$adj.r.squared
+  
+  summary_vector <- tibble(cluster = clust, age_p = age_p, co = co, sex_p = sex_p, intercept = intercept, co_sex = co_sex, r2 = r2, adj_r2 = adj_r2)
+  summary <- bind_rows(summary, summary_vector)
+}
+
+# SAVE DATA:
+write.csv(summary, paste(fig2out,version,'_Regression_ClusterDistributionAging_',prev,'_logNorm.csv',sep=''),row.names = F)
+write.csv(clust.dist, paste(fig2out,version,'_Regression_ClusterDistributionAgingValues_',prev,'_logNorm.csv',sep=''),row.names = F)
+
+# Figure 2B
+# LOAD DATA:
+df_f <- read_csv('./data/external/FlowCytometry_MetaData_Age.Sex.CellTypes.csv')
+flow_idents <- intersect(pheno$pheno, colnames(df_f))
+df_f <- df_f %>% mutate(EM1 = EM1 + EM20) %>% select(Age,Sex, flow_idents)
+df_df_f <- melt(data = df_f, id.vars = c('Age','Sex'), measure.vars = flow_idents, variable.name = 'cluster', value.name = 'norm')
+clust.dist <- as_tibble(df_df_f)
+
+# Perform Regression for each cluster:
+summary <- tibble()
+for (clust in unique(clust.dist$cluster)) {
+  regression <- clust.dist %>% filter(cluster == clust)
+  model <- lm(norm~Age+Sex, regression) # Note: This is the linear model generated, change this to preferred model if necessary
+  age_p <- summary(model)$coefficients[,4]["Age"]
+  co <- summary(model)$coefficients[,1]["Age"]
+  sex_p <- summary(model)$coefficients[,4]["SexM"]
+  co_sex <- summary(model)$coefficients[,1]["SexM"]
+  intercept <- summary(model)$coefficients[,1]["(Intercept)"]
+  r2 <- summary(model)$r.squared
+  adj_r2 <- summary(model)$adj.r.squared
+  
+  summary_vector <- tibble(cluster = clust, age_p = age_p, co = co, sex_p = sex_p, intercept = intercept, co_sex = co_sex, r2 = r2, adj_r2 = adj_r2)
+  summary <- bind_rows(summary, summary_vector)
+}
+
+# SAVE DATA:
+write.csv(summary, paste(fig2out,version,'_Regression_FLOW.ClusterDistributionAging_',prev,'.csv',sep=''),row.names = F)
+write.csv(clust.dist, paste(fig2out,version,'_Regression_FLOW.ClusterDistributionAgingValues_',prev,'.csv',sep=''),row.names = F)
+
+print('script 5.1.0 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r Figure2C_analysis}
+# VERSION: 5.0.6_ME_Int_OneGrp_logNorm_AllStats_scripts_saveChunks_cluster; PREVIOUS: ; STEP: Figure2
+# 1) Parse single-cell counts and metadata
+# 2) Perform regression analysis for each gene in each cluster
+# 3) Save data
+# ESTIMATED RESOURCES: time 12:00:00; memory 700GB; scratch 10GB; cpu-number 29
+ptm <- proc.time() # Start the clock!
+
+set.seed(1)
+
+# Generate Compute Cluster:
+
+n_cores <- 2 #change this based on your resources
+cl <- makeCluster(n_cores)
+registerDoParallel(cl, cores = n_cores)
+
+# LOAD DATA
+
+data <- readRDS("/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds")
+meta <- tibble(barcode = colnames(data)) %>% 
+  inner_join(read_csv("/data/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv", guess_max = 100000), by = "barcode") %>% 
+  inner_join(read_csv("/data/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv", guess_max = 100000), by = "cluster")
+gene_chunk <- scan("/data/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/code/raw_code/regression/5.0.6_ME_Int_OneGrp_logNorm_AllStats_scripts_saveChunks_cluster/chunk_1", what = "")
+
+# TRANSFORM DATA:
+
+# Subset adult cells
+cd8_meta <- meta %>% 
+  filter(Age > 5) %>%
+  filter(cell == "CD8") %>%
+  filter(cluster != 6)
+colnames(cd8_meta)[colnames(cd8_meta) == "barcode"] <- "bc"
+data <- data[gene_chunk, cd8_meta$bc]
+
+# Choose variables to regress 
+var <- "Age"
+cd8_meta$mixed <- substr(cd8_meta$Code, 1, 2)
+cluster_level <- "cluster"
+df <- cd8_meta
+
+df <- df[sample(nrow(df), 1000),]
+
+# Generate dummy data frame to hold results
+final <- data.frame(cluster = 0, gene = 0, age_p = 0, age_p_adj = 0, sex_p = 0, sex_p_adj = 0, co = 0, intercept = 0, co_sex = 0, r2 = 0, adj_r2 = 0, sd_int = 0, sd_residual = 0)
+
+clust <- unique(df[,colnames(df) == cluster_level])
+clust <- clust[[1]]
+clust <- clust[is.na(clust) == F]
+
+# Perform Regression for Each Cluster:
+for (l in clust) {
+  part <- df %>% filter(get(cluster_level) == l)
+  cell_list <- as.character(part$bc)
+  p_clust <- data[,cell_list]
+  t_clust <- t(as.matrix(p_clust))
+  
+  Age <- part[,colnames(part) == var]
+  Age <- Age[[1]]
+  Sex <- part$Sex
+  Age[Age == 0.1] <- 0
+  Age[Age == 83.1] <- 83
+  mixed <- part$mixed
+  
+  length(colnames(t_clust))
+  #l <- "CD8"
+  clusterExport(cl, c("t_clust","Age","Sex","mixed"))
+  listcl <- foreach (i=1:ncol(t_clust), .combine="rbind", .packages=c("lme4","broom.mixed","lmerTest"), .errorhandling = "pass") %dopar% {
+  #for (i in c(1:ncol(t_clust))) {
+    #i = 1
+      exp <- t_clust[,i]
+      mdf <- data.frame(exp = exp, Age = Age, Sex = Sex, mixed = mixed)
+      
+      model <- lmer(exp~Age + (1|mixed) + Sex, REML = T, mdf) # Note: This is the linear model generated, change this to preferred model if necessary
+      sum_test <- step(model,reduce.fixed = FALSE, reduce.random = FALSE)
+      summary <- broom.mixed::tidy(model)
+      summary2 <- broom.mixed::augment(model)
+      age_p <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+      co <- as.numeric(summary[2,4])
+      sex_p <- sum_test[["fixed"]][["Pr(>F)"]][[2]] 
+      co_sex <- as.numeric(summary[3,4]) 
+      intercept <- as.numeric(summary[1,4])
+      r2 <- 0
+      adj_r2 <- 0
+      
+      sd_int <- as.numeric(summary[4,4])
+      sd_residual <- as.numeric(summary[5,4])
+      
+      
+      df_log2_ind <- data.frame(cluster = l, gene = as.character(colnames(t_clust)[i]), age_p = age_p, age_p_adj = 100, sex_p = sex_p, sex_p_adj = 100, 
+                                co = co, intercept = intercept, co_sex = co_sex, r2 = r2, adj_r2 = adj_r2, sd_int = sd_int, sd_residual = sd_residual) 
+    final <- rbind(final,df_log2_ind)
+  }
+}
+
+final <- final[-1,]
+stopCluster(cl)
+
+file_out <- "/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig2_out/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_AllStats.csv.csv"
+write.csv(final, file_out, row.names = F)
+
+print('script 5.0.6 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r Figure2C}
+# VERSION: 2021_regression_unsupervisedAnalysis; PREVIOUS: 5.0.6_ME_Int_OneGrp_logNorm_AllStats_scripts_saveChunks_cluster; STEP: Figure2
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+ptm <- proc.time() # Start the clock!
+
+set.seed(1)
+setwd("/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data")
+
+# LOAD DATA:
+age.regression <- read_csv('./interim/regression/new_age_regression_removeGenes.csv', guess_max = 120000)
+
+pheno <- read_csv('./tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
+metadata <- read_csv('./tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000) %>%
+  inner_join(pheno, by = 'cluster') %>%
+  filter(cell == 'CD8') %>% 
+  filter(Age > 5)
+metadata$sample <- paste(metadata$Code, metadata$visit, sep = '_')
+data <- readRDS('./tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+
+# TRANSFORM DATA:
+
+# Find the age-related genes with at least 6 clusters that share the changes:
+genes_changed <- age.regression %>% group_by(gene) %>% summarize(num = n(), avg_co = mean(co)) %>% arrange(desc(avg_co))
+genes_changed <- genes_changed[genes_changed$num > 5,]
+chosen_genes <- genes_changed$gene
+
+# Grouping parameter for plotting:
+l <- 10
+
+# subset each cluster, organize data
+for (i in unique(metadata$pheno)) {
+  
+  sub_meta <- metadata %>% filter(pheno == i) %>% arrange(Age)
+  sub_meta$index <- 1:nrow(sub_meta)
+  
+  sub_data <- data[chosen_genes, sub_meta$barcode]
+  
+  final_data <- matrix(nrow = nrow(sub_data))
+  sub_meta_combined <- tibble()
+  for (j in unique(sub_meta$sample)) {
+    
+    sub_person_meta <- sub_meta %>% filter(sample == j)
+    split_index <- split(sub_person_meta$index, ceiling(seq_along(sub_person_meta$index)/l))
+    for (k in 1:length(split_index)) {
+      sub_person_meta_chunk <- sub_person_meta %>% filter(index %in% split_index[[k]])
+      
+      sub_person_data_chunk <- sub_data[,sub_person_meta_chunk$barcode]
+      if (is.vector(sub_person_data_chunk)) {
+        sub_person_data_chunk <- sub_person_data_chunk } else {
+        sub_person_data_chunk <- rowMeans(sub_person_data_chunk) }
+      
+      sub_person_meta_chunk$barcode <- k
+      if (length(unique(sub_person_meta_chunk$Age)) > 1) {
+        print('error')
+        stop()
+      }
+      sub_person_meta_chunk <- sub_person_meta_chunk[,c(4,17,21)] %>% distinct()
+      #print("i")
+      #print(i)
+      sub_meta_combined <- bind_rows(sub_meta_combined, sub_person_meta_chunk)
+      final_data <- cbind(final_data, sub_person_data_chunk)
+  }
+    
+  final_data <- final_data[,-1]
+  sub_age <- sub_meta_combined$Age
+  sub_sample <- sub_meta_combined$sample
+  
+  col_fun = colorRamp2(c(-2, 0, 3), c("blue", "grey65", "red"))
+  col_fun1 = colorRamp2(c(0, 0, 100), c("white", "white", "darkred"))
+  col_fun2 = colorRamp2(c(-0.005, 0, 0.01), c("purple3", "white", "goldenrod3"))
+  col_fun(seq(-3, 3))
+  
+  # generate heatmap for each cluster based on specific genes:)
+  set.seed(123)
+  #rownames(sub_data) = paste0("R", 1:nrow(sub_data))
+  colnames(final_data) = NULL
+  column_ha = HeatmapAnnotation(Sample = sub_sample, col = list(Age = col_fun1), Age = anno_barplot(sub_age))
+  sub_data_scaled <- t(scale(t(final_data)))
+  row_ha = rowAnnotation(`Age Coefficient` = genes_changed$avg_co, col = list(`Age Coefficient` = col_fun2))
+  #gg <- Heatmap(as.matrix(sub_data_scaled), row_names_gp = grid::gpar(fontsize = 7),
+  #              name = "mat", col = col_fun, top_annotation = column_ha, 
+  #              right_annotation = row_ha, row_order = rownames(sub_data_scaled),
+  #              column_order = rev(colnames(sub_data_scaled)))
+  gg <- Heatmap(as.matrix(sub_data_scaled), row_names_gp = grid::gpar(fontsize = 7),
+                name = "mat", col = col_fun, 
+                right_annotation = row_ha, row_order = rownames(sub_data_scaled),
+                column_order = rev(colnames(sub_data_scaled)))
+  
+  png(paste('/data/TCR/hemanihh/figure_scripts/fig2_out/',i,'_cellAvg_',l,'heatmap_sameGenes.png', sep=''), 
+      height = 150, width = 150, units = 'mm', res = 300)
+  print(gg)
+  dev.off()
+  }
+}
+
+print('script 2021_regression time: ')
+proc.time() - ptm # Stop the clock
+```
+
+
+```{r Figure2D_analysis}
+# VERSION: 7.4.0_5BinsPerson_ClusterCells; PREVIOUS: ; STEP: Figure2
+# 1) Parse single-cell counts and metadata
+# 2) Perform regression analysis for each gene in each cluster
+# 3) Save data
+# ESTIMATED RESOURCES: time 12:00:00; memory 700GB; scratch 10GB; cpu-number 29
+
+# ASK: DUPLICATED GENES
+ptm <- proc.time() # Start the clock!
+
+set.seed(1)
+
+# LOAD DATA
+setwd("/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2")
+data <- readRDS('./data/tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+info <- read_csv('./data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000)
+pheno <- read_csv('./data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
+df <- info %>% filter(cluster %in% pheno$cluster[2:10]) %>% inner_join(pheno, by = 'cluster')
+
+data <- data[,df$barcode]
+
+data <- data[sample(nrow(data), 3),]
+
+# TRANSFORM DATA
+
+# Split Data:
+gsea_data <- matrix(c(1:nrow(data)), ncol = 1)
+phenotype <- c()
+ID <- c()
+ages <- unique(df$Age)
+ages <- ages[ages > 5]
+ages <- sort(ages)
+clust <- unique(df$subset[df$subset %in% c('N','CM','EM','RA')])
+clust <- clust[is.na(clust) == F]
+version<-"7.4.0_5BinsPerson_ClusterCells"
+for (cluste in clust) {
+  cluster_data <- matrix(c(1:nrow(data)), ncol = 1)
+  cluster_phenotype <- c()
+  for (age in ages) {
+    subset_cells <- df %>% filter(Age == age & subset == cluste)
+    for (mini_cluster in unique(subset_cells$cluster)) {
+      cells <- subset_cells %>% filter(cluster == mini_cluster)
+      if (nrow(cells) > 10) {
+        cells <- as.character(cells$barcode)
+        cells <- sample(cells, length(cells))
+        
+        cell_split <- split(cells, rep_len(1:20, length(cells)))
+        #cell_split <- split(cells, ceiling(seq_along(cells)/250))
+        for (i in 1:length(cell_split)) {
+          cell_data <- data[,cell_split[[i]]]
+          cell_average <- rowMeans(as.matrix(cell_data))
+          
+          gsea_data <- cbind(gsea_data,cell_average)
+          phenotype <- c(phenotype,age)
+          
+          cluster_data <- cbind(cluster_data,cell_average)
+          cluster_phenotype <- c(cluster_phenotype,age)
+        }
+      }
+    }
+  }
+    cluster_data <- cluster_data[,-1]
+    write.csv(cluster_data, paste('/data/TCR/hemanihh/figure_scripts/fig2_out/',version,'_Dataframe_',cluste,'_integrated_logNorm.csv',sep=''), row.names = F)
+    write(as.character(cluster_phenotype), paste('/data/TCR/hemanihh/figure_scripts/fig2_out/',version,'_Character_',cluste,'.phenotypes_integrated_logNorm.txt',sep=''))
+}
+
+gsea_data <- gsea_data[,-1]
+write.csv(gsea_data, paste('/data/TCR/hemanihh/figure_scripts/fig2_out/',version,'_Dataframe_GSEAsplit_integrated_logNorm.csv',sep=''), row.names = F)
+write(as.character(phenotype), paste('/data/TCR/hemanihh/figure_scripts/fig2_out/',version,'_Character_GSEAsplit.phenotypes_integrated_logNorm.txt',sep=''))
+write(rownames(data), paste('/data/TCR/hemanihh/figure_scripts/fig2_out/',version,'_Character_GSEAsplit.genes_integrated_logNorm.txt',sep=''))
+
+# Generate new set of genes for GSEA analysis:
+
+library(biomaRt)
+ensembl <- useMart("ensembl")
+datasets <- listDatasets(ensembl)
+ensembl = useDataset("hsapiens_gene_ensembl",mart=ensembl)
+#attributes = listAttributes(ensembl)
+
+gene_ensembl <- getBM(attributes=c('ensembl_gene_id', 'external_gene_name'), 
+      values = toupper(rownames(data)), 
+      mart = ensembl)
+gene_ensembl <- gene_ensembl %>% arrange(ensembl_gene_id)
+genes_final <- gene_ensembl[match(rownames(data), gene_ensembl$external_gene_name),]
+write(genes_final$ensembl_gene_id, paste('/data/TCR/hemanihh/figure_scripts/fig2_out/',version,'_Character_GSEAsplit.ENSEMBLgenes_integrated_logNorm.txt',sep=''))
+
+print('script 7.3.0 time: ')
+proc.time() - ptm # Stop the clock
+
+# VERSION: 7.3.0_regression_GO.GSEA_integrated_logNorm_allCells; PREVIOUS: 7.4.0_5BinsPerson_ClusterCells; STEP: Figure2
+# 1) Parse single-cell counts and metadata
+# 2) Perform regression analysis for each gene in each cluster
+# 3) Save data
+# ESTIMATED RESOURCES: time 12:00:00; memory 700GB; scratch 10GB; cpu-number 29
+ptm <- proc.time() # Start the clock!
+
+# Set Directories:
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/')
+
+gene_list <- scan('./data/interim/regression/7.4.0_5BinsPerson_ClusterCells_Character_GSEAsplit.genes_integrated_logNorm.txt', what = '')
+master_list <- list()
+for (cell in c('N','CM','EM','RA')) {
+
+exp.N <- read_csv(paste('./data/interim/regression/7.4.0_5BinsPerson_ClusterCells_Dataframe_',cell,'_integrated_logNorm.csv',sep=''))
+exp.N <- t(as.matrix(exp.N))
+labels.N <- as.numeric(scan(paste('./data/interim/regression/7.4.0_5BinsPerson_ClusterCells_Character_',cell,'.phenotypes_integrated_logNorm.txt',sep=''), what = ''))
+corre <- cor(exp.N, labels.N, use='complete.obs')
+corre <- corre[,1]
+names(corre) <- gene_list
+corre <- sort(corre, decreasing = T)
+coef.N <- tibble(gene = names(corre), co = corre)
+
+
+gsea.N <- gene_set_enrichment(coef.N)
+gsea.df.N <- as.data.frame(gsea.N)
+master_list[[paste(cell)]] <-  gsea.N
+master_list[[paste(cell,'.df',sep='')]] <-  gsea.df.N
+}
+saveRDS(master_list, '/data/TCR/hemanihh/figure_scripts/fig2_out/7.3.0_GSEA_Subsets_5BinsPerson_AllCells_integrated_logNorm.Rds')
+```
+
+```{r Figure2D}
+# VERSION: 2021_regression_GSEAAnalysis; PREVIOUS: 7.3.0_regression_GO.GSEA_integrated_logNorm_allCells; STEP: Figure2
+# 1) Parse gsea analysis
+# 2) enrich for most age-related genes
+# 3) Plot cnetPlot for GSEA of shared functions
+ptm <- proc.time() # Start the clock!
+
+#TODO: CAN'T FIND THESE FILES EITHER
+
+set.seed(1)
+
+# LOAD DATA:
+
+gsea <- readRDS('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/interim/regression/7.3.0_GSEA_Subsets_5BinsPerson_ClusterCells_integrated_logNorm.Rds')
+
+# TRANSFORM DATA:
+
+# combine GSEA:
+gsea_df_n <- gsea[[2]] 
+gsea_df_cm <- gsea[[4]]
+gsea_df_em <- gsea[[6]]
+gsea_df_ra <- gsea[[8]]
+
+gsea_df_n$subset <- 'N'
+gsea_df_cm$subset <- 'CM'
+gsea_df_em$subset <- 'EM'
+gsea_df_ra$subset <- 'RA'
+
+gsea_df_all <- rbind(rbind(rbind(gsea_df_n, gsea_df_cm), gsea_df_em), gsea_df_ra)
+
+
+# Load data and choose shared age-related genes:
+age.regression <- read_csv('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/interim/regression/new_age_regression_removeGenes.csv', guess_max = 120000)
+pheno <- read_csv('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/tidy/pheno_assgnmnt_logNorm.csv')
+metadata <- read_csv('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/tidy/clustering_metadata_logNorm.csv', guess_max = 100000) %>%
+  inner_join(pheno, by = 'cluster') %>%
+  filter(cell == 'CD8') %>% 
+  filter(Age > 5)
+metadata$sample <- paste(metadata$Code, metadata$visit, sep = '_')
+#data <- readRDS('/home/jon/Documents/NIH_Docs/scRNA_P1/data/tidy/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+
+# Find the most age-related genes in each cluster (identify as many overlaps as possible):
+
+genes_changed <- age.regression %>% group_by(gene) %>% summarize(num = n(), avg_co = mean(co)) %>% arrange(desc(avg_co))
+genes_changed <- genes_changed[genes_changed$num > 5,]
+chosen_genes <- genes_changed$gene
+
+# Find most age-related genesets:
+
+gsea_df_all <- convert_gsea_df_to_symbol(gsea_df_all, species = 'Hs')
+gsea_df_all_ovlp <- gsea_gene_overlap(gsea_df_all, chosen_genes)
+
+gsea_df_ovlp_all_shared <- gsea_df_all_ovlp %>% group_by(Description) %>% summarize(num = n())
+gsea_df_ovlp_all_shared <- gsea_df_ovlp_all_shared[gsea_df_ovlp_all_shared$num > 3,]
+gsea_df_all_ovlp_chosen <- gsea_df_ovlp_all_shared %>% inner_join(gsea_df_all_ovlp) #%>% group_by(Description) %>% summarize(avg = mean(ovlp_num))
+
+#write.csv(gsea_df_all_ovlp_chosen, '/home/jon/Documents/NIH_Docs_Laptop/scRNAseq_P1/data/interim/regression/gsea_df_overlap_chosen.csv', row.names = F)
+functions_chosen <- read_csv('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/interim/regression/Core age change gsea-1-17-21.csv')
+
+
+shown_gsea <- unique(functions_chosen[functions_chosen$type %in% c(1:3),]$Description)
+#shown_gsea_codes <- unique(gsea_df_all[gsea_df_all$Description %in% shown_gsea,]$ID)
+
+gsea[[1]]@result <- gsea[[1]]@result %>% filter(Description %in% shown_gsea)
+gsea[[1]]@result <- convert_gsea_df_to_symbol(gsea[[1]]@result, species = 'Hs')
+gsea[[3]]@result <- gsea[[3]]@result %>% filter(Description %in% shown_gsea)
+gsea[[3]]@result <- convert_gsea_df_to_symbol(gsea[[3]]@result, species = 'Hs')
+gsea[[5]]@result <- gsea[[5]]@result %>% filter(Description %in% shown_gsea)
+gsea[[5]]@result <- convert_gsea_df_to_symbol(gsea[[5]]@result, species = 'Hs')
+gsea[[7]]@result <- gsea[[7]]@result %>% filter(Description %in% shown_gsea)
+gsea[[7]]@result <- convert_gsea_df_to_symbol(gsea[[7]]@result, species = 'Hs')
+
+for (des in shown_gsea) {
+  
+  gsea1 <- gsea[[1]]@result[gsea[[1]]@result$Description == des,]$core_enrichment
+  gsea3 <- gsea[[3]]@result[gsea[[3]]@result$Description == des,]$core_enrichment
+  gsea5 <- gsea[[5]]@result[gsea[[5]]@result$Description == des,]$core_enrichment
+  gsea7 <- gsea[[7]]@result[gsea[[7]]@result$Description == des,]$core_enrichment
+  
+  gene.split1 <- unlist(strsplit(gsea1, '/'))
+  gene.split3 <- unlist(strsplit(gsea3, '/'))
+  gene.split5 <- unlist(strsplit(gsea5, '/'))
+  gene.split7 <- unlist(strsplit(gsea7, '/'))
+  
+  gene.shared <- intersect(intersect(intersect(gene.split1, gene.split3), gene.split5), gene.split7)
+  #gene.gsea <- paste(gsea1,gsea3,gsea5,gsea7,sep='/')
+  gene.unique <- unique(gene.shared)
+  
+  gene.used <- gene.unique # intersect(gene.unique, chosen_genes)
+  gene.slash <- paste(gene.used, collapse='/')
+  gsea[[1]]@result[gsea[[1]]@result$Description == des,]$core_enrichment <- gene.slash
+}
+
+png('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig2_out/cnetplot_regression_unsupervisedGSEA_CatLab_49genes.png',
+    height = 200, width = 200, units = 'mm', res = 300)
+cnetplot(gsea[[1]], showCategory = shown_gsea, foldChange = chosen_genes, node_label = 'category')
+dev.off()
+
+write(chosen_genes, '/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig2_out/cnetplot_regression_unsupervisedGSEA_49genes.txt')
+
+print('script 2021_regression time: ')
+proc.time() - ptm # Stop the clock
+```
+

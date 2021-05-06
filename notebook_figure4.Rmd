@@ -1,0 +1,578 @@
+---
+title: "Figure4"
+author: "Raheel R Ahmad"
+output: html_notebook
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+
+
+# Data Repo
+working_directory <- '.'
+setwd('/data/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/code/test_code/rerun_scripts/notebooks/data-repo_figure4')
+setwd(working_directory)
+
+```
+
+```{r Figure4B_2}
+# 4.4.0_Predict_ExternalTestData
+
+library(tidyverse)
+library(Seurat)
+library(ranger)
+library(psych)
+library(glmnet)
+library(tensorflow)
+library(keras)
+
+test_list <- read_csv('./4.4.0_test_list.csv')
+test_list$sample <- c(1:15)
+rf_data <- readRDS('./3.5.5_MERF_ranger_500tree_3000mtry_100ndsize_IntegratedData_30dim1500genes_fixed_DATA_OneGrp_logNorm.Rds')
+
+final <- readRDS('./4.4.0_TestMatrix_geneNameFix.Rds')
+labels <- abs(parse_number(rownames(final)))
+
+# Fix Gene Name for RF Model:
+RF.model <- readRDS('./3.5.5_MERF_ranger_500tree_3000mtry_100ndsize_IntegratedData_30dim1500genes_fixed_OneGrp_logNorm.Rds')
+RF.fit <- RF.model$fit.ranger
+
+# Fix Gene Name for ENET Model:
+# enet.model <- readRDS('./3.5.5_MEEN_glmnet_integrated_OneGrp_logNorm_parallel_geneNameFix.Rds')
+## model trained elsewhere
+enet.model <- readRDS("/data/TCR/10X_Genomics/scRNAseq_P4_HUMAN_GEX/data/interim/MEEN_glmnet/3.5.5_MEEN_glmnet_integrated_OneGrp_logNorm_parallel_geneNameFix.Rds")
+
+# enet.model <- readRDS('./3.5.5_MEEN_glmnet_integrated_OneGrp_logNorm_parallel.Rds')
+# fit.enet <- enet.model$fit.enet
+# currInd <- match(fit.enet$lambda.min,fit.enet$glmnet.fit$lambda)
+# indices <- convert_genes(enet.model[["fit.enet"]][["glmnet.fit"]][["beta"]]@Dimnames[[1]], colnames(final))
+# enet.model[["fit.enet"]][["glmnet.fit"]][["beta"]]@Dimnames[[1]][indices] <- gsub('\\.', '-', enet.model[["fit.enet"]][["glmnet.fit"]][["beta"]]@Dimnames[[1]][indices])
+# unlist_terms <- str_split(str(enet.model[["fit.enet"]][["terms"]][[2]]), ' + ')
+# saveRDS(enet.model, './3.5.5_MEEN_glmnet_integrated_OneGrp_logNorm_parallel_geneNameFix.Rds')
+
+# new.terms <- unlist(strsplit(as.character(enet.model$fit.enet$terms), " \\+ "))
+# nl.terms <- new.terms[grepl("\n", new.terms)]
+# new.terms[grepl("\n", new.terms)] <- substr(nl.terms, 6, nchar(nl.terms))
+# new.terms <- new.terms[2:length(new.terms)]
+
+# colnames(final) <- new.terms
+# # predict on raw log2 data:
+final_tbl <- as_tibble(final)
+#index <- convert_genes(colnames(final_tbl), rownames(data))
+write.csv(final_tbl, './4.4.0_TestMatrix_geneNameFix.csv')
+fit.enet <- enet.model$fit.enet
+
+##################### problem area
+predictions_log2 <- predict(fit.enet, newx = final, s="lambda.min")
+pred_tbl <- tibble(sample=labels, prediction=predictions_log2[,1])
+# RF: 
+#pred_tbl <- tibble(sample=labels, prediction=predictions_log2$predictions)
+ggplot(pred_tbl, aes(x=factor(labels), y=prediction)) +
+  geom_violin(fill = 'goldenrod3')+
+  theme_minimal() + theme_bw()
+pred_tbl <- pred_tbl %>% inner_join(test_list)
+pred_tbl$Age_Group <- pred_tbl$Age
+pred_tbl$Age_Group <- factor(pred_tbl$Age_Group, levels = c('Young','Old'))
+ggplot(pred_tbl, aes(x=factor(Age_Group), y=prediction)) +
+  geom_violin(aes(fill = Age_Group))+
+  scale_fill_manual(values = c('pink', 'darkred')) +
+  theme_minimal() + theme_bw(base_size = 6) +
+  geom_boxplot(width=0.1) +
+  coord_cartesian(ylim = c(3,97)) +
+  scale_y_continuous(breaks = c(0,20,40,60,80,100))
+ggsave('./figures/4.4.0_ExternalPrediction_OldYoung_MEEN.png',height = 50, width = 50, units = 'mm', dpi = 300)
+ttest <- t.test(pred_tbl$prediction[pred_tbl$study == '10x'], pred_tbl$prediction[pred_tbl$study == 'Jackson'])
+dif <- mean(pred_tbl$prediction[pred_tbl$study == '10x']) - mean(pred_tbl$prediction[pred_tbl$study == 'Jackson'])
+
+# Predict on scaled data:
+  # scale the data:
+col_means <- colMeans(rf_data[,3:(ncol(rf_data)-1)])
+col_sd <- apply(rf_data[,3:(ncol(rf_data)-1)], 2, sd)
+
+scaled_mat <- rescale(final_tbl[,-ncol(final_tbl)], mean = col_means, sd = col_sd, df = T)
+scaled_mat$Sex <- final_tbl$Sex
+
+predictions_scaled <- predict(RF.fit, data = scaled_mat)
+pred_tbl <- tibble(sample=labels, prediction=predictions_scaled$predictions)
+pred_tbl <- pred_tbl %>% inner_join(test_list)
+ggplot(pred_tbl, aes(x=factor(Age), y=prediction)) +
+  geom_violin(aes(fill = Age))+
+  theme_minimal() + theme_bw() +
+  geom_boxplot(width=0.1)
+ttest <- t.test(pred_tbl$prediction[pred_tbl$study == '10x'], pred_tbl$prediction[pred_tbl$study == 'Jackson'])
+dif <- mean(pred_tbl$prediction[pred_tbl$study == '10x']) - mean(pred_tbl$prediction[pred_tbl$study == 'Jackson'])
+
+####################
+
+```
+
+```{r Figure4B}
+
+# R libraries
+library(tidyverse)
+library(gtools)
+library(glmnet)
+
+# external scripts (in /scripts folder on GitHub repo)
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/matrix_functions.R')
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/regression_functions.R')
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/mixed_effect_regressionForest.R')
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/mixed_effect_regressionForest_ranger.R')
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/mixed_effect_elasticNet_glmnet_parallel.R')
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/machine_learning_functions.R')
+
+
+#4.0.0_prediction_comparison_integrated_logNorm
+library(tidyverse)
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/mixed_effect_regressionForest.R')
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/mixed_effect_regressionForest_ranger.R')
+library(ranger)
+library(Metrics)
+library(ggridges)
+
+version <- '3.6.0'
+
+# pull from /data/TCR/10X_Genomics/scRNAseq_P4_HUMAN_GEX/data/interim/MERF_ranger
+rf.model <- readRDS('./3.5.5_MERF_ranger_500tree_3000mtry_100ndsize_IntegratedData_30dim1500genes_fixed_OneGrp_logNorm.Rds')
+enet.model <- readRDS('./3.5.5_MEEN_glmnet_integrated_OneGrp_logNorm_parallel.Rds')
+
+df <- readRDS('./3.5.5_MERF_ranger_500tree_3000mtry_100ndsize_IntegratedData_30dim1500genes_fixed_DATA_OneGrp_logNorm.Rds')
+
+# for ENET:
+fit.enet <- enet.model$fit.enet
+currInd <- match(fit.enet$lambda.min,fit.enet$glmnet.fit$lambda)
+predictions <- as.numeric(fit.enet$fit.preval[,currInd])
+bi <- enet.model$`bi[[r]]`
+bi_data <- tibble(bi = bi, ID = unique(df$cluster.id))
+
+# REGULAR
+#predictions <- rf.model$predictions
+
+#MERF
+predictions <- rf.model$fit.ranger$predictions
+bi <- rf.model$`bi[[r]]`
+bi_data <- tibble(bi = bi, ID = unique(df$cluster.id))
+
+predict_df <- tibble(Age = df$Y, ID = df$cluster.id,  prediction = predictions) %>% inner_join(bi_data, by = 'ID')
+#group = factor(ID)
+# predict_df <- predict_df %>% group_by(ID,Age) %>% filter(prediction < quantile(prediction, 0.99),  ## this appears to be breaking it
+#                                                       prediction > quantile(prediction, 0.01))
+
+predict_df <- predict_df %>% group_by(ID,Age)
+predict_df <- predict_df %>% mutate(facet = ifelse(ID == 'cross-sectional', 'cross-sectional', 'longitudinal'))
+predict_df$facet <- factor(predict_df$facet, levels = c('longitudinal', 'cross-sectional'))
+predict_df$group <- paste(predict_df$Age, predict_df$facet, sep='_')
+#write.csv(predict_df, '/data/TCR/10X_Genomics/scRNAseq_P4_HUMAN_GEX/data/interim/MERF_ranger/3.5.4_MERF_ranger_500tree_3000mtry_100ndsize_IntegratedData_TreatAllCrossSectional_predictions.Rds')
+# for MERF prediction: y = prediction + bi
+
+ggplot(predict_df, aes(x=Age, y = prediction + bi)) +
+  theme_minimal() + theme_bw(base_size = 7)  + theme(aspect.ratio = 1, legend.position = 'none', axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  geom_abline(intercept = 0, slope = 1, color = 'grey40', linetype = 2) +
+  #geom_violin(scale = 'width', aes(group=factor(Age)), fill = 'grey60') +
+  geom_boxplot(width = 0.7, aes(group=group, fill = facet), lwd = 0.25, color = 'grey30', outlier.alpha = 0) +
+  #geom_boxplot(width = 0.5, aes(group=factor(Age))) +
+  #geom_jitter(width = 1) +
+  geom_smooth(data = predict_df[predict_df$facet == 'longitudinal',], method = 'lm', aes(group = ID, color = 'darkred',alpha = 5), size = 0.25, se = F) +
+  #stat_smooth(geom='line', alpha=0.5, se=FALSE) +
+  geom_smooth(method = 'lm', size = 0.65, color = 'darkblue') + 
+  coord_cartesian(xlim = c(-10,96), ylim = c(-10,95)) +
+  scale_x_continuous(breaks = c(0,20,40,60,80,100)) +
+  scale_y_continuous(breaks = c(0,20,40,60,80,100))
+  #scale_fill_manual(values = c('goldenrod3','forestgreen'))
+#facet_wrap(ID~., nrow = 1, scales = 'free_x')
+
+ggsave('./figures/4.3.0_prediction_comparison_integration_logNorm_ViolinLine_Longitudinal_MEEN.png', height = 84, width = 84, units = 'mm', dpi = 300)
+
+cor(predict_df$Age, (predict_df$prediction + predict_df$bi))
+rmse(predict_df$Age, (predict_df$prediction + predict_df$bi))
+line <- lm((predict_df$prediction + predict_df$bi) ~ predict_df$Age)
+
+# predict_df <- predict_df %>% filter(Age > 5 & Age <= 30 | Age >= 70)
+predict_df <- predict_df %>% mutate(Age_Group = ifelse(Age > 40, 'Old', 'Young'))
+predict_df$Age_Group <- factor(predict_df$Age_Group, levels = c('Young','Old'))
+ggplot(predict_df, aes(x=Age_Group, y=prediction + bi)) +
+  geom_violin(aes(fill = Age_Group)) +
+  scale_fill_manual(values = c('pink', 'darkred')) +
+  theme_minimal() + theme_bw(base_size = 6) +
+  geom_boxplot(width=0.1) +
+  coord_cartesian(ylim = c(3,97)) +
+  scale_y_continuous(breaks = c(0,20,40,60,80,100))
+ttest <- t.test(predict_df$prediction[predict_df$Age_Group == 'Old'], predict_df$prediction[predict_df$Age_Group == 'Young'])
+dif <- mean(predict_df$prediction[predict_df$Age_Group == 'Old'] + predict_df$bi[predict_df$Age_Group == 'Old']) - mean(predict_df$prediction[predict_df$Age_Group == 'Young'] + predict_df$bi[predict_df$Age_Group == 'Young'])
+
+ggsave('./figures/4.3.0_prediction_comparison_integration_logNorm_ViolinLine_Longitudinal_AgeGroups_MEEN.png', height = 50, width = 50, units = 'mm', dpi = 300)
+
+# Plot Bi: (supplemental)
+## JEFFREY REWRITE
+ggplot(tibble(bi = unlist(enet.model$`bi[[r]]`), ID = unique(df$cluster.id)), aes(x=ID, y=bi)) +
+  theme_minimal() + theme_bw(base_size = 6) +
+  geom_segment( aes(x=ID, xend=ID, y=0, yend=bi)) +
+  geom_point(size = 2, color = 'red') +
+  geom_point(size = 1, color = 'orange')
+ggsave('./figures/4.3.0_prediction_comparison_integration_logNorm_BiPlot_MEEN.png', height = 33, width = 170, units = 'mm', dpi = 300)
+
+# Plot Residuals:
+residuals <- predict_df %>% mutate(residuals = (prediction + bi) - Age) %>% mutate(model = 'MEEN')
+predict_rf <- tibble(Age = df$Y, ID = df$cluster.id,  prediction = predictions) %>% inner_join(bi_data, by = 'ID')
+residual_rf <- predict_rf %>% mutate(residuals = (prediction + bi) - Age) %>% mutate(model = 'MERF')
+
+residuals_combine <- rbind(residuals, residual_rf)
+ggplot(residuals_combine, aes(x=residuals, y=model, fill = model)) +
+  theme_minimal() + theme_bw(base_size = 6) +
+  geom_density_ridges(scale = 5)
+
+ggplot(residuals_combine, aes(x=model,y=residuals, fill = model)) +
+  theme_minimal() + theme_bw(base_size = 6) +
+  geom_boxplot(aes(alpha=0.5)) +
+  coord_flip()
+
+ggsave('./figures/4.3.0_prediction_comparison_integration_logNorm_BoxPlot_residuals.png', height = 50, width = 50, units = 'mm', dpi = 300)
+
+write.csv(residuals_combine, './4.3.0_MERF_MEEN_residuals_predictions.csv', row.names = F)
+
+stats_residuals <- residuals_combine %>% group_by(model) %>% summarise(mean = mean(residuals), sd = sd(residuals))
+write.csv(stats_residuals, './4.3.0_MERF_MEEN_residualStats.csv', row.names = F)
+
+ggplot(residuals_combine[residuals_combine$model == 'MEEN',], aes(x=Age, y=residuals)) +
+  theme_minimal() + theme_bw(base_size = 6) +
+  geom_jitter(width = 2, size = 0.001, color = "#F8766D") + #"#00BFC4"
+  geom_smooth(method = 'lm', color = 'grey50')
+ggsave('./figures/4.3.0_prediction_comparison_integration_logNorm_linePlot_residuals_MEEN.png', height = 72, width = 105, units = 'mm', dpi = 300)
+
+corr <- cor(residuals_combine[residuals_combine$model == 'MEEN',]$Age, residuals_combine[residuals_combine$model == 'MEEN',]$residuals)
+
+# summarize ENET Model:
+
+plot(fit.enet)
+ggsave('./figures/4.3.0_prediction_comparison_integration_logNorm_CV_MEEN.png', height = 50, width = 50, units = 'mm', dpi = 300)
+
+# library(c060)
+# coeff <- names(as.matrix(coef(fit.enet))[as.matrix(coef(fit.enet))[,1]> 0,])[-1]
+# Plot.coef.glmnet(fit.enet, coeff)
+# ggsave('./figures/4.3.0_prediction_comparison_integration_logNorm_CoeffPath_MEEN.png', height = 200, width = 200, units = 'mm', dpi = 300)
+
+
+```
+
+```{r Figure4C/D/E_Analysis}
+# 7.0.0_ageChange
+rm(list=ls())
+library(tidyverse)
+library(mpath)
+library(glmnet)
+library(glmnetUtils)
+library(MASS)
+
+# Load Data:
+
+genome_basepair_size <- 3099750718
+
+  # mutations:
+mutations_cross <- read_csv('mutations_scored_cross.csv', guess_max = 100000) %>%
+  filter(is.na(umi_fraction_filter) == F) %>% dplyr::select(Chr, POS, REF, ALT, GENE, donor, bc)
+mutations_longi <- read_csv('mutations_scored_longi.csv', guess_max = 100000) %>%
+  filter(is.na(umi_fraction_filter) == F) %>% dplyr::select(Chr, POS, REF, ALT, GENE, donor, bc)
+colnames(mutations_cross)[c(6)] <- c('BL_ID')
+colnames(mutations_longi)[c(6)] <- c('Person')
+
+  # metadata:
+meta <- read_csv('./clustering_metadata_logNorm.csv', guess_max = 100000)
+meta$bc <- paste(substr(meta$barcode, 1,16), '-1', sep='')
+pheno <- read_csv('./pheno_assgnmnt_logNorm.csv')
+meta <- meta %>% inner_join(pheno)
+meta_basic_cross <- meta[,c(6,17)]
+meta_basic_longi <- meta[,c(3,17)]
+
+  # predictions:
+predictions <- read_csv('./4.3.0_MERF_MEEN_residuals_predictions.csv', guess_max = 100000) %>%
+  filter(model == 'MEEN')
+predictions_meta <- read_csv('./3.5.5_MEEN_glmnet_integrated_META_OneGrp_logNorm_parallel.csv', guess_max = 100000)
+predictions <- cbind(predictions[,2:5],predictions_meta$barcode) # <-- GET ERROR HERE
+
+  # read, umi, coverage information:
+read_cross <- read.csv('./mutations_cross.csv', header=FALSE)
+read_longi <- read.csv('./mutations_longi.csv', header=FALSE)
+
+colnames(read_cross) <- c("BL_ID", "bc", "reads_exome", "reads", "umi", "coverage_exome", "coverage")
+read_cross$bc <- str_extract(read_cross$bc, regex("[ACGT]+.*"))
+
+colnames(read_longi) <- c("Person", "bc", "reads_exome", "reads", "umi", "coverage_exome", "coverage")
+read_longi$bc <- str_extract(read_longi$bc, regex("[ACGT]+.*"))
+
+exome_cross <- read_csv('./donor_summary_cross.csv', guess_max = 100000)
+exome_longi <- read_csv('./donor_summary_longi.csv', guess_max = 100000)
+
+# Combine Studies:
+mut_cross <- mutations_cross %>% group_by(BL_ID,bc) %>% summarize(num_mut = n())
+mut_0 <- meta_basic_cross %>% left_join(mut_cross, by = c('BL_ID','bc'))
+mut_0$num_mut[is.na(mut_0$num_mut)] <- 0
+mut_cross_comb <- mut_0 %>% inner_join(read_cross, by = c('BL_ID','bc')) %>%
+  inner_join(exome_cross, by = c('BL_ID')) %>%
+  inner_join(meta, by = c('BL_ID', 'bc'))
+  
+mut_longi <- mutations_longi %>% mutate(Code = substr(Person, 1, 2)) %>% group_by(Code,Person,bc) %>% summarize(num_mut = n()) 
+mut_0 <- meta_basic_longi %>% left_join(mut_longi, by = c('Person','bc'))
+mut_0$num_mut[is.na(mut_0$num_mut)] <- 0
+mut_longi_comb <- mut_0  %>% inner_join(read_longi, by = c('Person','bc')) %>%
+  inner_join(exome_longi, by = c('Code')) %>%
+  inner_join(meta, by = c('Person', 'bc', 'Code'))
+
+mut_all <- bind_rows(mut_cross_comb, mut_longi_comb)
+write.csv(mut_all, './7.0.0_Mutations_number_new.csv', row.names = F)
+mut_all <- read_csv('./7.0.0_Mutations_number_new.csv', guess_max = 100000)
+
+# replace coverage and exome coverage with corrected data at 10X depth:
+new_coverage <- read_csv('./201127_alignment_bam_coverages_Jeffrey.csv')
+colnames(new_coverage)[1] <- "Code"
+
+mut_all <- mut_all %>% dplyr::select(-ex_coverage, -ex_coverage_exome) %>% inner_join(new_coverage, by = 'Code')
+
+# Diagnostic Plots:
+# Perform adjustments on log2 transformed data for all metrics
+mut_all$log2_mut <- 0
+mut_all$norm_mut <- 0
+mut_all$scale_mut <- 0
+adj_mut <- mut_all %>% filter(num_mut > 0)
+kept_mut <- mut_all %>% filter(num_mut == 0)
+
+  # genomic reads:
+
+  # Plot these three: umi, coverage, ex_coverage
+suppressWarnings({adj_mut$log2_mut <- log2(adj_mut$num_mut+1)
+ggplot(adj_mut, aes(x=coverage, y=log2_mut)) +
+  theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1, legend.position = 'none') +
+  geom_point(aes(color = study), size = 0.1) +
+  geom_smooth(method="glm.nb", se=TRUE, color = 'black') +
+  coord_cartesian(ylim = c(0, 5.5))
+ggsave('./figures/7.0.0_diagnostic_NB_RawRm0_coverageVsLog2Mutations.png', height = 45, width = 45, units = 'mm', dpi = 300)
+summary(glm.nb(log2_mut ~ coverage, data=adj_mut))
+})
+# Negative Binomial regression:
+adj_mut <- adj_mut[is.na(adj_mut$umi)==FALSE,]
+nbGLM <- glm.nb(log2_mut ~ umi + coverage + ex_coverage, data=adj_mut)
+adj_mut$norm_mut = (nbGLM$residuals + nbGLM[["coefficients"]][["(Intercept)"]])
+
+png('./figures/7.0.0_diagnostic_normMutations_histogram.png', height = 100, width = 100, units = 'mm', res = 300)
+hist(adj_mut$norm_mut)
+dev.off()
+# Normalize to 0 to 1:
+adj_quantile <- quantile(adj_mut$norm_mut, probs = c(0.001,0.999))
+adj_mut[adj_mut$norm_mut < min(adj_quantile),]$norm_mut <- min(adj_quantile)
+adj_mut[adj_mut$norm_mut > max(adj_quantile),]$norm_mut <- max(adj_quantile)
+value <- adj_mut$norm_mut
+adj_mut$scale_mut <- (value - min(value)) / (max(value) - min(value)) * max(adj_mut$num_mut) 
+
+library(plotly)
+library(plot3D)
+library(RColorBrewer)
+png('./figures/7.0.0_diagnostic_plotly_3VariablesVslog2ScaledMutations_Rawrm0.png', height = 200, width = 200, units = 'mm', res = 300)
+scatter3D(z=adj_mut$coverage, y=adj_mut$umi, x=adj_mut$ex_coverage, 
+        type="scatter3d", bty = "g", theta = 35, phi = 25,
+        colvar=adj_mut$scale_mut, size = 0.01, col = brewer.pal(10, 'RdBu')[c(1:2,7:9,10,10,10)])
+dev.off()
+
+summary(glm.nb(data = adj_mut, num_mut ~ umi + coverage + ex_coverage))
+
+mut_all <- rbind(adj_mut, kept_mut)
+
+# log2 transform to better approximate a normal distribution:
+write.csv(mut_all, './7.0.0_Mutations_normalized_lmAdjusted_rm0.csv', row.names = F)
+
+```
+
+```{r Figure4C/D/E}
+# 7.1.0_ageChange_2
+rm(list=ls())
+library(lme4)
+library(broom.mixed)
+library(lmerTest)
+library(tidyverse)
+library(MuMIn)
+
+# Load Mutations Data:
+
+mut_all <- read_csv('./7.0.0_Mutations_normalized_lmAdjusted_rm0.csv', guess_max = 100000) %>% 
+  filter(cell == 'CD8')
+
+predictions <- read_csv('./7.0.0_Mutations_predictions.csv')
+mut_all <- mut_all %>% inner_join(predictions, by = 'barcode')
+# Show Relationship to Age:
+
+colors <- tibble(subset = c('N','CM','EM','RA'), color = c('forestgreen','dodgerblue3','orangered','purple3'))
+
+# Filter unnecessary cells:
+mut_all <- mut_all %>% filter(Age > 5, subset != 'EFF')
+mut_all$Group <- substr(mut_all$Code, 1, 2)
+mut_all$prediction_add <- mut_all$prediction + mut_all$bi
+
+# Age vs Predicted Age by subsets:
+
+mut_all$subset <- factor(mut_all$subset, levels = colors$subset)
+ggplot(mut_all, aes(x=Age,y=prediction_add)) +
+  theme_minimal() + theme_bw(base_size=7) + theme(aspect.ratio = 1) +
+  geom_smooth(method = 'lm', aes(group = subset, color = subset), se = F) +
+  scale_color_manual(values = colors$color) +
+  coord_cartesian(xlim = c(20,90), ylim = c(20,90)) +
+  scale_x_continuous(breaks = seq(20,90,10)) +
+  scale_y_continuous(breaks = seq(20,90,10))
+ggsave('./figures/7.1.0_AgeVsPredictedAge_subset.png', height = 75, width=95, units='mm', dpi =600)  
+# mixed effect line:
+final <- tibble()
+for (i in unique(mut_all$subset)) {
+  mut_sub <- mut_all[mut_all$subset == i,]
+  model <- lmer(prediction_add~Age + (1|Group), REML = T, mut_sub) # This is the actual linear model generated, change this to preferred model if necessary
+  #summary(model)
+  sum_test <- step(model,reduce.fixed = FALSE, reduce.random = FALSE)
+  summary <- broom.mixed::tidy(model)
+  summary2 <- broom.mixed::augment(model)
+  age_p <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+  co <- as.numeric(summary[2,4])
+  intercept <- as.numeric(summary[1,4])
+  add <- tibble(subset = i, age_p = age_p, co = co, intercept = intercept)
+  final <- bind_rows(final, add)
+}
+write.csv(final, './7.1.0_Mutations_AgeVsPredictedAge_subset_ME.csv', row.names = F)
+
+
+# Plot positive cells for their Expression Across Age:
+# plot log2 and raw data
+# Age and Predicted Age
+
+pos_mut <- mut_all %>% filter(num_mut > 0)
+
+# generate line:
+final <- tibble()
+for (i in unique(mut_all$subset)) {
+  mut_sub <- pos_mut[pos_mut$subset == i,]
+  model <- lm(scale_mut~prediction_add, mut_sub)
+  #summary(model)
+  cor <- cor(mut_sub$scale_mut, mut_sub$prediction_add)
+  sum_test <- summary(model)
+  age_p <- sum_test[["coefficients"]][2,4]
+  co <- sum_test[["coefficients"]][2,1]
+  intercept <- sum_test[["coefficients"]][1,1]
+  add <- tibble(subset = i, age_p = age_p, co = co, intercept = intercept, cor = cor)
+  final <- bind_rows(final, add)
+}
+write.csv(final, './7.1.0_log2ScalePosNumMutationsVsPredictedAge_subset_LM_RawRm0NB.csv', row.names = F)
+
+final$subset <- factor(final$subset, levels = colors$subset)
+ggplot(pos_mut, aes(x=prediction_add, y=scale_mut)) +
+  theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1) +
+  geom_point(alpha = 0) +
+  #geom_boxplot(aes(fill = factor(Age))) +
+  geom_abline(data = final, aes(slope = co, intercept = intercept, color = subset)) +
+  coord_cartesian(xlim = c(20,90), ylim = c(10,20)) +
+  scale_x_continuous(breaks = seq(20,90,10)) +
+  scale_color_manual(values = colors$color)
+ggsave('./figures/7.1.0_PosNumMutationsVsPredictedAge_subset_ME_Log2Rm0.png', height = 75, width=95, units='mm', dpi =600)  
+
+# Percentage of positive cells:
+perc_mut <- mut_all %>% group_by(Age,Group,subset) %>% 
+  summarize(pos_perc = sum(num_mut > 0), total = n(), prediction_add = mean(prediction_add), ex_coverage = mean(ex_coverage), ex_reads = mean(ex_reads)) %>% mutate(norm = pos_perc / total)
+
+#lm <- lm(norm ~ ex_coverage, data = perc_mut) #+ log2(ex_reads+1) coverage+1) + 
+lm <- glm.nb(data = perc_mut, norm ~ ex_coverage)
+perc_mut$adj_norm = (lm$residuals + lm[["coefficients"]][["(Intercept)"]])
+value <- perc_mut$adj_norm
+perc_mut$scale_mut <- (value - min(value)) / (max(value) - min(value)) * 100 
+
+# generate line:
+final <- tibble()
+for (i in unique(mut_all$subset)) {
+  mut_sub <- perc_mut[perc_mut$subset == i,]
+  model <- lm(scale_mut~prediction_add, mut_sub)
+  #summary(model)
+  cor <- cor(mut_sub$scale_mut, mut_sub$prediction_add)
+  sum_test <- summary(model)
+  age_p <- sum_test[["coefficients"]][2,4]
+  co <- sum_test[["coefficients"]][2,1]
+  intercept <- sum_test[["coefficients"]][1,1]
+  add <- tibble(subset = i, age_p = age_p, co = co, intercept = intercept, cor = cor)
+  final <- bind_rows(final, add)
+}
+write.csv(final, './7.1.0_MutationsPercentVsPredictedAge_subset_ME_Log2Rm0.csv', row.names = F)
+
+
+perc_mut$subset <- factor(perc_mut$subset, levels = colors$subset)
+final$subset <- factor(final$subset, levels = colors$subset)
+#plot:
+ggplot(perc_mut, aes(x=prediction_add, y=scale_mut)) +
+  theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1) +
+  geom_point(aes(color = subset), alpha = 0) +
+  #geom_smooth(method = 'lm', se = F, aes(group = subset, color = subset)) +
+  geom_abline(data = final, aes(slope = co, intercept = intercept, color = subset)) +
+  coord_cartesian(xlim = c(20,90)) +
+  scale_x_continuous(breaks = seq(20,90,10)) +
+  scale_color_manual(values = colors$color) +
+  ylab('Scaled Percentage of Mutated Cells') +
+  xlab('Predicted Age') + 
+  #facet_wrap(subset~.)
+ggsave('./figures/7.1.0_MutationsPercentVsPredictedAge_subset_LM_Log2Rm0.png', height = 75, width=95, units='mm', dpi =600)  
+
+# OTHER ANALYSIS:
+
+# Mutations Vs. Age: 
+
+ggplot(mut_all, aes(x=Age,y=log2_mut)) +
+  theme_minimal() + theme_bw(base_size=7) +
+  geom_jitter(width=3, alpha = 0.5) +
+  geom_smooth(method = 'lm', aes(group = Group)) +
+  geom_smooth(method = 'lm', color = 'darkred', size = 1.1) +
+  facet_wrap(subset~.)
+ggsave('./figures/7.1.0_log2MutationsVsAge_subset_All.png', height = 100, width=125, units='mm', dpi =600)  
+
+# regular line:
+final <- tibble()
+for (i in unique(mut_all$subset)) {
+  mut_sub <- mut_all[mut_all$subset == i,]
+  model <- lm(log2_mut~prediction_add, mut_sub)
+  summary <- summary(model)
+  age_p <- summary[["coefficients"]][2,4]
+  co <- summary[["coefficients"]][2,1]
+  add <- tibble(subset = i, age_p = age_p, co = co)
+  final <- bind_rows(final, add)
+}
+write.csv(final, '7.1.0_Mutations_log2MutationsVsPredictedAge_subset.csv', row.names = F)
+
+# mixed effect line:
+final <- tibble()
+for (i in unique(mut_all$subset)) {
+  mut_sub <- mut_all[mut_all$subset == i,]
+  model <- lmer(log2_mut~prediction_add + (1|Group), REML = T, mut_sub) # This is the actual linear model generated, change this to preferred model if necessary
+  #summary(model)
+  sum_test <- step(model,reduce.fixed = FALSE, reduce.random = FALSE)
+  summary <- broom.mixed::tidy(model)
+  summary2 <- broom.mixed::augment(model)
+  age_p <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+  co <- as.numeric(summary[2,4])
+  add <- tibble(subset = i, age_p = age_p, co = co)
+  final <- bind_rows(final, add)
+}
+write.csv(final, '7.1.0_Mutations_log2MutationsVsPredictedAge_subset_ME.csv', row.names = F)
+
+# Difference in Mutations Between Subsets:
+mut_subset_avg <- mut_all %>% group_by(subset) %>% summarize(avg_mut = mean(log2_mut))
+write.csv(mut_subset_avg, '7.1.0_Mutations_AverageMutations_subset.csv', row.names = F)
+
+# Rate of Mutation Change vs Rate Age Change:
+
+# Chronological Age vs Predicted Age:
+
+ggplot(mut_all, aes(x=Age, y=prediction_add)) +
+  geom_point(size = 0.5) +
+  geom_smooth(method = 'lm', aes(group = Group)) +
+  facet_wrap(subset~.)
+ggsave('./figures/7.1.0_ChronologicalAgeVsPredictedAge_subset_All.png', height = 125, width=100, units='mm', dpi =600)  
+
+
+############ EXTRA ###############
+
+#ggplot(m)
+
+
+
+```
+

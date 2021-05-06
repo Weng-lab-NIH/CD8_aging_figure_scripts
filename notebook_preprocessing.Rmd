@@ -1,0 +1,378 @@
+---
+title: "Preprocessing"
+author: "Raheel R Ahmad"
+output: html_notebook
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+
+# R libraries
+library(tidyverse)
+library(Seurat)
+library(Matrix)
+library(sctransform)
+
+
+# Data Repo
+working_directory <- './data-repo/'
+#setwd(working_directory)
+
+# external scripts (in /scripts folder on GitHub repo)
+source('./scripts-Project_Independent/matrix_functions.R')
+```
+
+
+```{r preprocessing}
+# VERSION: 1.0.3_SeuratFiltering; PREVIOUS: 0.0.0; STEP: preprocessing
+# 1) Parse Cell Ranger AGGR matrix and cluster information
+# 2) Remove Specified Clusters that were 'contaminating' from the 10X Cell Ranger v4.0.0 outuput. Note: NK clusters not removed
+# 3) Filter by default seurat parameters
+# 4) Normalize Data
+# 5) SAVE data
+#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+ptm <- proc.time() # Start the clock!
+
+#INITIALIZE DIRECTORIES / VARIABLES
+set.seed(1)
+aggr_directory <- './aggr_CR4-0-0_crossLongCombined_noNormalize/'
+
+# LOAD DATA:
+
+clusters <- read_csv(paste(aggr_directory,'outs/analysis/clustering/graphclust/clusters.csv',sep=''))
+pbmc.original <- Read10X(data.dir = paste(aggr_directory,"outs/filtered_feature_bc_matrix/",sep='')); dim(pbmc.original)
+
+# TRANSFORM DATA:
+
+# Remove contaminating clusters from 10X output. Determined from 10X Cell Ranger t-SNE/clustering summary for Loupe Cell Browser:
+# Note: NK clusters not removed
+print(nrow(clusters))
+clusters_new <- tibble(Barcode = colnames(pbmc.original)) %>% inner_join(clusters, by = 'Barcode')
+contaminating_clusters <- c(31, 26, 27, 17, 25, 29)
+clusters_new <- clusters_new %>% filter(!(Cluster %in% contaminating_clusters))
+print(nrow(clusters_new))
+
+# Create Seurat object for project: 
+pbmc.new <- pbmc.original[,clusters_new$Barcode]
+pbmc <- CreateSeuratObject(counts = pbmc.new, project = "10X_CD8_Aging_P1_P4", min.cells = 3, min.features = 200)
+pbmc@active.ident <- factor(clusters_new$Cluster)
+Idents(pbmc) <- "cluster" # This needs to be put in because seurat has a glitch and doesnt do it itself
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+
+# Filter and normalize data:
+pbmc_trim <- subset(pbmc, subset = nFeature_RNA > 500); print('remove Genes < 500: '); pbmc_trim
+pbmc_trim <- subset(pbmc_trim, subset = nFeature_RNA < 2500); print('remove Genes > 2500: '); pbmc_trim
+pbmc_trim <- subset(pbmc_trim, subset = percent.mt < 20); print('remove MT > 20: '); pbmc_trim
+
+# SAVE DATA:
+
+barcodes <- colnames(pbmc_trim@assays$RNA@data)
+write(barcodes, './barcodes')
+
+genes <- rownames(pbmc_trim@assays$RNA@data)[which(rowSums(pbmc_trim@assays$RNA@data) != 0)]
+print(length(genes))
+write(genes, './genes')
+
+pbmc_meta <- pbmc_trim@meta.data %>% mutate(barcode = colnames(pbmc_trim@assays$RNA@counts))
+write.csv(pbmc_meta, './preprocessing_meta.csv',row.names = F)
+
+print('script 1.0.3 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r HTO_libraries}
+# VERSION: 0.2.0_preprocessing_HTOlibraries; PREVIOUS: 1.0.3_SeuratFiltering; STEP: preprocessing
+# 1) Parse HTO data
+# 2) Assign barcodes to HTO with highest UMI count
+# 3) SAVE data
+ptm <- proc.time() # Start the clock!
+
+#INITIALIZE DIRECTORIES / VARIABLES
+
+longi_drive <- './scRNAseq_P4_HUMAN_GEX/'
+
+# LOAD DATA:
+
+# barcodes <- scan('./preprocessing/P1_P4_noNormalize/barcodes', what = '')
+barcodes <- scan('./barcodes', what = '')
+barcodes <- tibble(barcode = substr(barcodes,1,16), BC_ID = abs(parse_number(barcodes)))
+
+info <- read_csv('./info.csv')
+codes <- unique(info$Person[info$study == 'longi'])
+codes <- codes[codes != 'F3_2']
+
+# Parse the HTO libraries:
+hto_mat <- matrix(c(0,0),nrow=2)
+for (i in codes) {
+  matrix <- Read10X(paste(longi_drive,i,'_HTO_combined/outs/filtered_feature_bc_matrix',sep=''))
+  colnames(matrix) <- paste(colnames(matrix),i,sep='_')
+  hto_mat <- cbind(hto_mat, matrix)
+  }
+hto_mat <- hto_mat[,-1]
+hto_mat <- t(as.matrix(hto_mat))
+hto_mat <- hto_mat[order(hto_mat[,1]),]
+
+# TRANSFORM DATA:
+
+# Create a tibble to assign HTO tags to barcodes:
+hto_df <- tibble(barcode = substr(rownames(hto_mat), 1, 16), Person = substr(rownames(hto_mat), 20, 23), visit1 = hto_mat[,1], visit2 = hto_mat[,2])
+hto_df <- hto_df %>% mutate(ratio = visit1 / visit2)
+
+# combine all data:
+# assign a barcode to the hto with the highest number of umi counts
+hto_df <- hto_df %>% mutate(hash = ifelse(visit1 > visit2, 1, ifelse(visit2 > visit1, 2, NA)))
+hto_df <- hto_df %>% filter(is.na(hash) == F)
+
+decom_meta <- inner_join(barcodes, info, by = 'BC_ID')
+hto_df$hash <- as.numeric(hto_df$hash)
+decom_meta_hash <- left_join(decom_meta, hto_df, by = c('Person','hash','barcode'))
+decom_meta_nonHash <- decom_meta_hash[!(decom_meta_hash$Person %in% codes),]
+decom_meta_hash_fltr <- decom_meta_hash[decom_meta_hash$Person %in% codes,]
+decom_meta_hash_fltr <- decom_meta_hash_fltr[!is.na(decom_meta_hash_fltr$visit1),]
+decom_meta_hash <- rbind(decom_meta_nonHash, decom_meta_hash_fltr)
+decom_meta_hash <- decom_meta_hash[,-c(11:13)]
+
+# SAVE DATA: 
+write.csv(decom_meta_hash, './HTO_df_meta_fltr.csv', row.names = F)
+
+print('script 0.2.0 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r integration_step1}
+# VERSION: 21.0.2_Integration_CrossLongitudinalCD8; PREVIOUS: 0.2.0_preprocessing_HTOlibraries; STEP: preprocessing
+# 1) Parse metadata and sequencing libraries
+# 2) Integrate using Seurat default parameters
+# 3) SAVE data
+# SEURAT Tutorial: https://satijalab.org/seurat/articles/integration_introduction.html
+# ESTIMATED RESOURCES: time 12:00:00; memory 246GB; scratch 10GB; cpu-number 2
+ptm <- proc.time() # Start the clock!
+
+#INITIALIZE DIRECTORIES / VARIABLES
+set.seed(1)
+
+# LOAD DATA:
+
+# Load Counts:
+data <- Read10X(paste(aggr_directory,"outs/filtered_feature_bc_matrix/",sep=''))
+
+# Load Metadata:
+decom_meta_hash <- read_csv('./HTO_df_meta_fltr.csv', guess_max = 100000)
+decom_meta_hash$barcode <- paste(decom_meta_hash$barcode, decom_meta_hash$BC_ID, sep='-')
+decom_meta_hash <- decom_meta_hash %>% filter(BC_ID != 1, BC_ID != 2) # Note: BC_ID 1 and 2 are cord blood samples that were not included in integration because they are not present in both data
+barcodes <- decom_meta_hash$barcode
+genes <- scan('./3.2.0_GeneUsed_genesCell_sd_avgExp_less.txt', what = '') # Note: To reduce computational load, chosen genes meet the following criteria in both datasets integrated: 1) Expressed by more than 100 cells; 2) Have a standard deviation more than 0.1; 3) Expressed on average with more than 0.005 UMI counts/cell
+
+data_n <- data[genes,barcodes]
+info <- as.data.frame(decom_meta_hash)
+rownames(info) <- info$barcode
+
+# Prepare integration
+# Generate Seurat objects
+p1p4 <- CreateSeuratObject(data_n, meta.data = info)
+p1p4.list <- SplitObject(p1p4, split.by = "study")
+
+for (i in 1:length(p1p4.list)) {
+   p1p4.list[[i]] <- NormalizeData(p1p4.list[[i]], verbose = T)
+   p1p4.list[[i]] <- FindVariableFeatures(p1p4.list[[i]], verbose = T, nfeatures = 1000)
+}
+
+reference_dataset <- which(names(p1p4.list) == "cross")
+pbmc.anchors <- FindIntegrationAnchors(object.list = p1p4.list, dims = 1:50, reference = reference_dataset)
+pbmc.integrated <- IntegrateData(anchorset = pbmc.anchors, dims = 1:50, features.to.integrate = genes)
+pbmc.integrated <- ScaleData(pbmc.integrated)
+pbmc.integrated <- RunPCA(object = pbmc.integrated, verbose = FALSE)
+pbmc.integrated <- RunUMAP(pbmc.integrated, reduction = "pca", dims = 1:30)
+
+# Save data in case of computational node failure
+saveRDS(pbmc.integrated, paste('./21.0.2_Integration_longitudinalcd8_genes_1000VariableGenes_50Dims_Log-NormNKIncluded_CordBloodNotIncluded_2_CR40.Rds',sep=''))
+
+# Plot data
+# Cluster data
+DimPlot(pbmc.integrated, reduction = 'pca', group.by = 'study')
+
+dims <- c(1:10)
+perplexities <- c(30)
+seed <- c(7456)
+iters <- c(3000)
+pbmc.integrated <- RunTSNE(method = 'FIt-SNE', object = pbmc.integrated, dims = dims, perplexity = perplexities, seed.use = seed, max_iter = iters)
+
+# Save data in case of computational node failure
+saveRDS(pbmc.integrated, paste('./21.0.2_Integration_longitudinalcd8_tsne_genes_1000VariableGenes_50Dims_Log-NormNKIncluded_CordBloodNotIncluded_2_CR40.Rds',sep=''))
+
+# Initial clustering Analysis
+pbmc.integrated <- FindNeighbors(pbmc.integrated, dims = 1:15)
+pbmc.integrated <- FindClusters(pbmc.integrated, resolution = 0.8)
+
+# Save data in case of computational node failure
+saveRDS(pbmc.integrated, paste('./21.0.2_Integration_longitudinalcd8_tsne_clusters_genes_1000VariableGenes_50Dims_Log-NormNKIncluded_CordBloodNotIncluded_2_CR40.Rds',sep=''))
+DimPlot(pbmc.integrated, reduction="tsne")
+
+print('script 21.0.2 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r integration_step2}
+# VERSION: 21.0.5_Integration_CrossLongitudinalCD8_SexBatchCorrection; PREVIOUS: 21.0.2_Integration_CrossLongitudinalCD8; STEP: preprocessing
+# 1) Parse metadata and sequencing libraries
+# 2) Integrate using Seurat default parameters
+# 3) SAVE data
+# SEURAT Tutorial: https://satijalab.org/seurat/articles/integration_introduction.html
+# ESTIMATED RESOURCES: time 12:00:00; memory 246GB; scratch 10GB; cpu-number 2
+ptm <- proc.time() # Start the clock!
+
+#INITIALIZE DIRECTORIES / VARIABLES
+set.seed(1)
+
+# LOAD DATA:
+
+# Load Counts:
+data <- Read10X(paste(aggr_directory,"outs/filtered_feature_bc_matrix/",sep=''))
+
+# Load Metadata:
+decom_meta_hash <- read_csv('./HTO_df_meta_fltr.csv', guess_max = 100000)
+decom_meta_hash$barcode <- paste(decom_meta_hash$barcode, decom_meta_hash$BC_ID, sep='-')
+decom_meta_hash_n <- decom_meta_hash %>% filter(BC_ID %in% c(1,2))
+barcodes <- decom_meta_hash_n$barcode
+genes <- scan('./3.2.0_GeneUsed_genesCell_sd_avgExp_less.txt', what = '')
+
+pbmc.integrated <- readRDS('./21.0.2_Integration_longitudinalcd8_tsne_clusters_genes_1000VariableGenes_50Dims_Log-NormNKIncluded_CordBloodNotIncluded_2_CR40.Rds')
+data_o <- pbmc.integrated@assays$integrated@data
+info_o <- tibble(barcode = colnames(data_o)) %>% inner_join(decom_meta_hash, by = 'barcode')
+info_o <- as.data.frame(info_o)
+rownames(info_o) <- info_o$barcode
+
+# TRANSFORM DATA
+
+# Replace CD8 Cord Blood data back in to dataset:
+data_n <- data[genes,barcodes]
+data_n <- CreateSeuratObject(data_n)
+data_n <- NormalizeData(data_n, verbose = T)
+data_n <- data_n@assays$RNA@data
+info <- as.data.frame(decom_meta_hash_n)
+rownames(info) <- info$barcode
+
+data_i <- cbind(data_o, data_n)
+info_i <- rbind(info_o, info)
+
+
+p1p4 <- CreateSeuratObject(data_i, meta.data = info_i)
+p1p4.list <- SplitObject(p1p4, split.by = "Sex")
+
+for (i in 1:length(p1p4.list)) {
+   #p1p4.list[[i]] <- NormalizeData(p1p4.list[[i]], verbose = T)
+   p1p4.list[[i]] <- FindVariableFeatures(p1p4.list[[i]], selection.method = 'disp', verbose = T)
+   p1p4.list[[i]]@assays$RNA@var.features <- pbmc.integrated@assays$integrated@var.features
+}
+
+reference_dataset <- which(names(p1p4.list) == "F") # Note: Reference dataset is all female samples
+pbmc.anchors <- FindIntegrationAnchors(object.list = p1p4.list, dims = 1:50, reference = reference_dataset)
+pbmc.integrated <- IntegrateData(anchorset = pbmc.anchors, dims = 1:50, features.to.integrate = genes)
+pbmc.integrated <- ScaleData(pbmc.integrated)
+pbmc.integrated <- RunPCA(object = pbmc.integrated, verbose = FALSE)
+pbmc.integrated <- RunUMAP(pbmc.integrated, reduction = "pca", dims = 1:30)
+
+# Save data in case of computational node failure
+saveRDS(pbmc.integrated, paste('./21.0.2_Integration_longitudinalcd8_genes_1000VariableGenes_50Dims_Log-NormNKIncluded_CordBloodNotIncluded_2_sexBatchCorrect_CR40.Rds',sep=''))
+
+# Plot data
+# Cluster data
+DimPlot(pbmc.integrated, reduction = 'pca', group.by = 'study')
+
+dims <- c(1:10)
+perplexities <- c(30)
+seed <- c(7456)
+iters <- c(3000)
+pbmc.integrated <- RunTSNE(method = 'FIt-SNE', object = pbmc.integrated, dims = dims, perplexity = perplexities, seed.use = seed, max_iter = iters)
+
+# Save data in case of computational node failure
+saveRDS(pbmc.integrated, paste('./21.0.2_Integration_longitudinalcd8_tsne_genes_1000VariableGenes_50Dims_Log-NormNKIncluded_CordBloodNotIncluded_2_sexBatchCorrect_CR40.Rds',sep=''))
+
+# Initial clustering Analysis
+pbmc.integrated <- FindNeighbors(pbmc.integrated, dims = 1:30)
+pbmc.integrated <- FindClusters(pbmc.integrated, resolution = 0.8)
+
+# Save data in case of computational node failure
+saveRDS(pbmc.integrated, paste('./21.0.2_Integration_longitudinalcd8_tsne_clusters_genes_1000VariableGenes_50Dims_Log-NormNKIncluded_CordBloodNotIncluded_2_sexBatchCorrect_CR40.Rds',sep=''))
+
+print('script 21.0.5 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r merge_clusters}
+# VERSION: 21.4.0_ClusterMerging; PREVIOUS: 21.0.5_Integration_CrossLongitudinalCD8; STEP: preprocessing
+# 1) Parse clustering and metadata for chosen parameters
+# 2) Merge clusters by gene expression similarity
+# 3) Plot tSNE embeddings
+# 3) SAVE data
+# ESTIMATED RESOURCES: time ; memory ; scratch ; cpu-number 
+ptm <- proc.time() # Start the clock!
+
+#INITIALIZE DIRECTORIES / VARIABLES
+
+set.seed(1)
+
+# Parameters for clustering and tSNE embedding:
+l <- 0.9 # resolution
+m <- 15 # PCs
+
+i <- 10 # PCs
+j <- 3000 # perplexity
+k <- 9725 # seed
+
+# LOAD DATA:
+
+pbmc.integrated <- readRDS('./21.0.2_Integration_longitudinalcd8_tsne_clusters_genes_1000VariableGenes_50Dims_Log-NormNKIncluded_CordBloodNotIncluded_2_sexBatchCorrect_CR40.Rds')
+clustering <- read_csv(paste('./21.3.0_Integration_sexAdjClustering_res',l,'_dims',m,'_LogNorm_regular.csv', sep=''))
+cells <- try(read_csv(paste('./21.3.0_Integration_sexAdjTSNE_dim',i,'_iter',j,'_seed',k,'_logNorm_regular.csv', sep='')), silent = T)
+
+decom_meta_hash <- read_csv('./HTO_df_meta_fltr.csv', guess_max = 100000)
+adt_df <- read_csv('./ADT_df.csv')
+decom_meta_hash <- decom_meta_hash %>% left_join(adt_df, by = c('Person','barcode'))
+decom_meta_hash$barcode <- paste(decom_meta_hash$barcode, decom_meta_hash$BC_ID, sep = '-')
+
+meta.data <- read_csv('./preprocessing_meta.csv')
+
+# TRANSFORM DATA:
+
+# combine metadata:
+meta_cd8 <- try(tibble(barcode = colnames(pbmc.integrated@assays$integrated@data)) %>% 
+                  inner_join(decom_meta_hash, by = 'barcode') %>%
+                  inner_join(cells, by = 'barcode') %>%
+                  inner_join(clustering, by = 'barcode'), silent = T)
+meta_cd8 <- meta_cd8 %>% inner_join(meta.data[,c(4,5)], by = 'barcode')
+colnames(meta_cd8)[colnames(meta_cd8) == 'umap1'] <- 'tsne_1'
+colnames(meta_cd8)[colnames(meta_cd8) == 'umap2'] <- 'tsne_2'
+
+# reformat ADT counts of 0
+meta_cd8_n <- meta_cd8
+meta_cd8_n[is.na(meta_cd8_n$CD45RA) == T,]$CD45RA <- 0
+meta_cd8_n[is.na(meta_cd8_n$CD28) == T,]$CD28 <- 0
+
+# Merge smaller cluster identity based on tSNE and gene similarity
+meta_cd8_n[meta_cd8$cluster == 10,]$cluster <- 1
+meta_cd8_n[meta_cd8$cluster == 12,]$cluster <- 5
+meta_cd8_n[meta_cd8$cluster == 17,]$cluster <- 2
+meta_cd8_n[meta_cd8$cluster == 15,]$cluster <- 8
+meta_cd8_n[meta_cd8$cluster == 22,]$cluster <- 8
+meta_cd8_n[meta_cd8$cluster == 19,]$cluster <- 6
+meta_cd8_n[meta_cd8$cluster == 11,]$cluster <- 7
+meta_cd8_n[meta_cd8$cluster == 20,]$cluster <- 13
+meta_cd8_n[meta_cd8$cluster == 16,]$cluster <- 4
+meta_cd8_n[meta_cd8$cluster == 21,]$cluster <- 9
+
+cd8_lab <- meta_cd8_n %>% group_by(cluster) %>% 
+  summarize(tsne_x = mean(tsne_1), tsne_y = mean(tsne_2))
+
+# SAVE DATA:
+
+write.csv(meta_cd8_n, './clustering_metadata_logNorm.csv', row.names = F)
+
+saveRDS(pbmc.integrated@assays$RNA@data[,meta_cd8_n$barcode] / log(2), './P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+saveRDS(pbmc.integrated@assays$integrated@data[,meta_cd8_n$barcode] / log(2), './sexCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+
+print('script 21.4.0 time: ')
+proc.time() - ptm # Stop the clock
+```

@@ -1,0 +1,320 @@
+---
+title: "Figure1"
+author: "Raheel R Ahmad"
+output: html_notebook
+---
+
+```{r setup}
+rm(list = ls())
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+working_directory <- './data-repo/'
+knitr::knit_engines$set(python = reticulate::eng_python)
+
+# R libraries
+library(tidyverse)
+library(Seurat)
+library(RColorBrewer)
+library(textshape)
+library(FlowSOM)
+library(reticulate)
+
+# external scripts (in /scripts folder on GitHub repo)
+# py_install('pandas')
+# py_install('matplotlib')
+# py_install('numpy')
+
+```
+
+```{r Figure1B}
+# VERSION: a.0.6_2DProjections_integrated; PREVIOUS: ; STEP: Figure1
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+
+# flowSOM installed onto R/4.0 via "devtools::install_github("saeyslab/FlowSOM", build_vignettes = TRUE)" after moving library to library.deleteme.
+ptm <- proc.time() # Start the clock!
+
+# LOAD DATA:
+
+meta_cd8 <- read_csv("./clustering_metadata_logNorm.csv", guess_max = 100000)
+color <- read_csv("./pheno_assgnmnt_logNorm.csv", guess_max = 100000)
+pheno <- meta_cd8 %>%
+  inner_join(color, by = "cluster")
+
+pheno$cluster <- factor(pheno$cluster, levels = color$cluster)
+pheno_cd8 <- pheno %>% filter(cell == 'CD8')
+
+# Plot tSNE embeddings. Note: colors chosen arbitrarily
+ggplot(pheno_cd8, aes(x=tsne_1,y=tsne_2,color=cluster)) +
+  geom_point(size = 0.01) +
+  scale_color_manual(values = color$color) +
+  theme_minimal() + theme_bw() + theme(aspect.ratio = 1, legend.position = 'none')
+  
+ggsave('./a.0.6_2DProjections_Integrated_CD8_logNorm.png',
+       height = 10, width = 10, dpi = 300, units = 'in')
+
+print('script a.0.6 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r differential_expression}
+# VERSION: 21.5.0_ClusterDiffExp_logNorm; PREVIOUS: 21.4.0; STEP: Figure1
+# 1) Parse single-cell counts and metadata
+# 2) Perform Differential Expression
+# 4) SAVE data
+# SEURAT Tutorial: https://satijalab.org/seurat/articles/integration_introduction.html
+ptm <- proc.time() # Start the clock!
+
+# LOAD DATA:
+
+pbmc <- readRDS("./batchCorrected_matrix_clusterFltr_logNorm_log2.Rds") 
+meta <- tibble(barcode = colnames(pbmc)) %>% 
+                 inner_join(read_csv("./clustering_metadata_logNorm.csv", guess_max = 100000), by = "barcode") %>% 
+  inner_join(read_csv("./pheno_assgnmnt_logNorm.csv", guess_max = 100000), by = "cluster") %>%
+  filter(cell == "CD8")
+
+# Create Seurat Object and Assign Clusters
+# pbmc <- pbmc[gene_chunk,meta$barcode]
+pbmc <- pbmc[,meta$barcode]
+pbmc <- CreateSeuratObject(pbmc)
+ident_new <- meta$cluster
+names(ident_new) <- meta$barcode
+Idents(pbmc) <- ident_new
+
+# Perform Differential Expression:
+pbmc.markers <- FindAllMarkers(object = pbmc, only.pos = TRUE, min.pct = 0, logfc.threshold = 0.01, return.thresh = 1, test.use = "t")
+warnings()
+file_out <- "./21.5.0_Dataframe_DifferentialExpression_BatchCorrected_CD8_Ttest_logNorm.csv"
+write.table(pbmc.markers, file_out, sep = ",", col.names = !file.exists(file_out), append = T, row.names = F)
+
+print('script 21.5.0 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+
+```{r Figure1C}
+# VERSION: a.1.0_Heatmap_DifferentialExpression; PREVIOUS: ; STEP: Figure1
+# 1) Parse single-cell counts and metadata
+# 2) Filter dataset for selected differentially expressed genes
+# 3) rearrange cells by cluster, then age
+# 4) SAVE data
+version <- 'a.1.0'
+ptm <- proc.time() # Start the clock!
+
+# Note: Final Heatmap plotted in JMP program (SAS) from data matrix outputted in this script
+
+# LOAD DATA:
+
+df <- read_csv('./clustering_metadata_logNorm.csv', guess_max = 100000)
+pheno <- read_csv('./pheno_assgnmnt_logNorm.csv', guess_max = 100000)
+expression_mat <- readRDS('./batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+# genes <- scan('./data/external/210313_HeatmapGenes_Fig1', what='')
+genes <- scan('./3.2.0_GeneUsed_genesCell_sd_avgExp_less.txt', what='')
+
+gene_len <- length(genes)
+
+# Arrange Samples by cluster, then age
+df <- df %>% inner_join(pheno, by = 'cluster')
+df$cluster <- factor(df$cluster, levels = pheno$cluster[-c(11:14)])
+df <- df %>% filter(cell == 'CD8') %>% arrange(desc(Age))
+
+final <- matrix(c(1:gene_len))
+exp_sub_mat <- as.matrix(expression_mat[genes,])
+for (l in levels(df$cluster)) {
+  
+  cells <- df[df$cluster == l,]$barcode
+  clust <- exp_sub_mat[,cells]
+  clust <- as.data.frame(clust)
+  
+  dfe <- matrix(rep(NA,gene_len*150), ncol = 150, nrow = gene_len)
+  
+  final <- cbind(final, clust)
+  final <- cbind(final, dfe)
+}
+
+heat_mat <- as.matrix(final)[,-c(1,c((ncol(final)-149):ncol(final)))]
+heat_mat_2 <- t(heat_mat)
+
+# SAVE data
+
+write.table(heat_mat_2, paste('./',version,'_Matrix_ChosenDiffExp.Ordered_scaled_integrated_logNorm_031321.txt',sep=''))
+write.csv(heat_mat_2, paste('./',version,'_Matrix_ChosenDiffExp.Ordered_integrated_logNorm_031321.csv',sep=''))
+
+# Optional Code:
+# Plot bar for Colors: 
+# pheno$val <- 1
+# ggplot(pheno, aes(x=cluster,y=val,fill=cluster,color=cluster)) +
+#   geom_bar(stat = 'identity') +
+#   scale_color_manual(values = c("2" = "green", "0" = "forestgreen", "3" = "deepskyblue", "5" = "dodgerblue3", "7" = "gold2", "9" = "coral2", "1" = "orange", "4" = "deeppink2", "6" = "darkorchid3", "10" = "red3")) +
+#   scale_fill_manual(values = c("2" = "green", "0" = "forestgreen", "3" = "deepskyblue", "5" = "dodgerblue3", "7" = "gold2", "9" = "coral2", "1" = "orange", "4" = "deeppink2", "6" = "darkorchid3", "10" = "red3"))
+# ggsave(paste('./figures/exploratory_figures/clustering/',version,'_BarGraph_ColorsForClusters.png',sep=''),height = 5, width = 5, units = 'in',dpi=600)
+
+print('script a.1.0 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r Figure1D}
+# VERSION: a.3.0_Heatmap_DifferentialExpression; PREVIOUS: ; STEP: Figure1
+# 1) Parse FlowJo
+# 2) Plot
+# 3) rearrange cells by cluster, then age
+# 4) SAVE data
+ptm <- proc.time() # Start the clock!
+
+# Note: Analysis of dataset performed in FlowJo v10.3
+# This script plots data from FlowJo analysis
+
+# LOAD DATA:
+
+filName <- './concat_filtered_188_01Apr19_1.fcs'
+wsp_file <- './scRNA-Seq Paper Flow Analysis.wsp'
+load('./concat_filtered_188_01Apr19_1..csv.flowSOM.csv.RData')
+
+# INITIALIZE DIRECTORIES / VARIABLES
+set.seed(1)
+bkcolor <- c('gold2','coral2','orange','darkorchid3','white','deeppink2','grey70','white','red3','white','deepskyblue','forestgreen','dodgerblue3')
+fSOM$metaclustering[c(13,14)] <- 1
+
+# Plot FlowSOM Map
+# png('./figures/a.3.0_FLOWSOM_MAPFLOWSOM_MAP.CellTypeTSNE.transparent.png',height=1000,width=1500,units='px')
+gg<-PlotStars(fSOM$FlowSOM, backgroundValues = fSOM$metaclustering, backgroundColor = bkcolor)
+print(gg)
+# dev.off()
+
+par(mfrow = c(1,1))
+
+# Plot individual antibody markers
+for (i in 1:length(fSOM[["FlowSOM"]][["prettyColnames"]])) {
+  
+  marker <- fSOM[["FlowSOM"]][["prettyColnames"]][i]
+  name <- names(fSOM[["FlowSOM"]][["prettyColnames"]][i])
+  
+  # png(paste('./figures/a.3.0_', marker,'.png', sep=''),height=125,width=175,units='mm',res=300)
+  gg<-PlotMarker(fsom = fSOM$FlowSOM, marker = name)
+  print(gg)
+  # dev.off()
+}
+
+print('script a.3.0 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+---
+# Author: Jeffrey Cifello
+
+Info: Take input from FlowSOM output file. Plot expression of each marker for each subset. 
+
+
+Run/debugged on python 3.7.5. 
+Numpy:  1.19.4
+Pandas: 1.1.5
+Matplotlib: 3.3.3 
+---
+
+```{python Figure1E}
+
+import pandas as pd 
+import matplotlib.pyplot as plt 
+import numpy as np
+
+def combine_and_rename(exp_file, clusters_file):
+	exp = pd.read_csv(exp_file)
+	clusters = pd.read_csv(clusters_file)
+
+	total_csv = pd.DataFrame(data={
+			"CD45RA":exp['FJComp-PE-Cy7-A :: CD45RA'], 
+			"CD62L":exp['FJComp-FITC-A :: CD62L'],
+       		"CD95":exp['FJComp-PE-Cy5-A :: CD95(DX2)'],
+       		"CD28":exp['FJComp-BV786-A :: CD28'],
+ 			"CD27":exp['FJComp-BUV395-A :: CD27'],
+       		"CD69":exp['FJComp-BV650-A :: CD69'],
+       		"PD-1":exp['FJComp-BUV737-A :: PD-1'], 
+       		"CD127":exp['FJComp-BV711-A :: CD127 IL7R'],
+       		"KLRG1":exp['FJComp-PE-A :: KLRG1'], 
+       		"CD2":exp['FJComp-BV605-A :: CD2'],
+			"EOMES":exp['FJComp-BB700-A :: Eomes'],
+       		"GZMB":exp['FJComp-Alexa Fluor 700-A :: GZB'],
+       		"Perforin":exp['FJComp-PE-CF594-A :: Perforin'],
+       		"CD3":exp['FJComp-BV570-A :: CD3'], 
+       		"EventNumberDP":exp['EventNumberDP'],
+       		"Cluster":round(clusters["FlowSOM"]/100).astype(int)
+       		})
+
+	return total_csv
+
+def smooth(hist_vals, smoothing):
+	"""Perform a Gaussian smoothing"""
+	x = 2
+	smoothed = []
+	for i in range(x, len(hist_vals) - x - 1):
+		bin_sum = 0
+		bin_denom = 0
+		bin_nom = 0
+		for j in range(-x, x):
+			 bin_coef = (1 / (2*np.pi*smoothing**2)) * (np.e**(-(j**2)/(2*smoothing**2)))
+			 bin_denom += bin_coef
+			 bin_nom += bin_coef*hist_vals[i+j]
+		smoothed.append(bin_nom / bin_denom)
+
+	return np.array(smoothed)
+
+
+def plot_exp_for_all(input_df):
+	## move cluster 13 to 1:
+	cluster_5_idx = input_df.loc[input_df["Cluster"]==5].index
+	input_df.loc[cluster_5_idx, "Cluster"] = 1
+	all_exp = input_df[input_df.columns[:-2]].to_numpy().flatten()
+	globe_min = min(all_exp)
+	globe_max = max(all_exp)
+
+	markers = list(input_df.columns[:-2])
+
+	clusters = (12,7,11,13,1,2,3,6,4,9)
+	num_markers = len(set(markers))
+	num_clusters = len(clusters)
+	fig, a = plt.subplots(num_clusters, num_markers)
+
+	num_bins = 100
+	cluster_names = {1:'EM1',2:'EM2',3:'EM3',4:'EMRA2',
+			6:'EMRA1',7:'No',9:'Eff',11:'SCM',12:'Na',13:'CM'}
+	
+	# put clusters in correct order for figure
+	
+	for cluster_idx, cluster_num in enumerate(clusters):
+		for marker_idx, marker in enumerate(markers):
+			marker_min = min(input_df[marker].tolist())
+			marker_max = max(input_df[marker].tolist())
+			
+			exp_data = input_df.loc[input_df["Cluster"] == cluster_num, marker]
+			exp_data = np.array(exp_data)
+			my_bins = np.linspace(globe_min, globe_max, num_bins)
+			hist = np.histogram(exp_data, my_bins)
+			hist = smooth(hist[0], smoothing=1)
+			# hist = hist[0] ## use if not smoothing
+			x = np.arange(len(hist))
+			a[cluster_idx][marker_idx].plot(x, hist, linewidth=0.7, color="black")
+			a[cluster_idx][marker_idx].fill_between(x, 0, hist, color="gray")
+			plt.sca(a[cluster_idx][marker_idx])
+			plt.xticks([])
+			plt.yticks([])
+			if marker_idx == 0:
+				plt.ylabel(cluster_names[cluster_num], rotation='horizontal', labelpad=20.0)
+
+			if cluster_idx == 0:
+				plt.title(marker, rotation='vertical')
+
+	plt.show()
+
+if __name__ == '__main__':
+	exp_csv="concat_filtered_188_01Apr19_1..ExtNode.csv"
+	cluster_csv="FlowSOM.concat_filtered_188_01Apr19_1.EPA.csv"
+
+	total_df = combine_and_rename(exp_csv, cluster_csv)
+	# total_df.to_csv("formatted_flow_df.csv")
+
+	plot_exp_for_all(total_df)
+
+
+```
+

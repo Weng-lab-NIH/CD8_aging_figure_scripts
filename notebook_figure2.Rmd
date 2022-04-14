@@ -36,25 +36,6 @@ setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
 
 ```
 
-```{r}
-# VERSION: 5.1.0_Regression_ClusterDistribution; PREVIOUS: ; STEP: Figure2
-# 1) Parse single-cell counts and metadata
-# 2) Plot tSNE projection
-#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
-ptm <- proc.time() # Start the clock!
-
-set.seed(1)
-
-# Figure2A
-# LOAD DATA:
-# TRANSFORM DATA:
-# SAVE DATA:
-
-print('script 5.0.6 time: ')
-proc.time() - ptm # Stop the clock
-```
-
-
 ```{r Figure2A/B}
 # VERSION: 5.1.0_Regression_ClusterDistribution; PREVIOUS: ; STEP: Figure2
 # 1) Parse single-cell counts and metadata

@@ -1,0 +1,1080 @@
+---
+title: "Figure3"
+author: "Raheel R Ahmad"
+output: html_notebook
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+
+# R libraries
+library(tidyverse)
+library(Seurat)
+library(reshape2)
+library(gplots)
+library(RColorBrewer)
+library(ggpmisc)
+library(ggpubr)
+library(clusterProfiler)
+
+
+# external scripts (in /scripts folder on GitHub repo)
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/regression_functions.R')
+source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/matrix_functions.R')
+source('/data/TCR/hemanihh/figure_scripts/read_chunks.R')
+
+# Data Repo
+working_directory <- './data-repo/'
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
+#setwd(working_directory)
+
+```
+
+```{r Figure3A_analysis}
+# VERSION: 7.0.2_regression_ModesOfChange_integrated_logNorm_examples; PREVIOUS: ; STEP: Figure3
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+ptm <- proc.time() # Start the clock!
+
+# LOAD DATA:
+version <- "7.0.2"
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
+pbmc_counts <- Read10X('/data/TCR/10X_Genomics/data/interim/10X_PIPELINE_P1_P4/GEX/aggr_CR4-0-0_crossLongCombined_noNormalize/outs/filtered_feature_bc_matrix')
+pbmc_data <- readRDS('./data/tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+
+pheno <- read_csv('./data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
+info <- read_csv('./data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000)
+info <- info %>% inner_join(pheno, by = 'cluster')
+info <- info %>% filter(BC_ID != 1 & info$BC_ID != 2 & cluster != 6  & cell == 'CD8')
+
+clusters <- info %>% inner_join(pheno, by = 'cluster')
+
+#regression.cluster <- read_csv('./data/interim/regression/5.0.5_regression_10perc_01FDR_logNorm_OneGrp.csv', guess_max = 10000)
+regression.subset <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_subset.csv')
+#regression.cell <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_cell.csv')
+
+t_exptotall <- 10
+t_exptotal <- log2(1 + (t_exptotall/100))/70
+t_ptotal   <- 0.05
+
+#######################################
+###### Calculate Types of Change ######
+#######################################
+
+# Regress the Modes:
+#modes.of.change.cluster <- Calculate_ModesOfChange(pbmc_counts,clusters,'cluster',0.1,regression.cluster,t_ptotal,t_exptotal,'cell',29)
+
+#regression.filter <- #read_csv('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/interim/regression/5.0.5_regression_10perc_01FDR_logNorm_OneGrp.csv', guess_max = 10000)
+#regression.filter <- regression.cell %>% filter(age_p_adj < t_ptotal, abs(co) > t_exptotal)
+regression.filter <- regression.subset %>% filter(gene %in% c('GZMA','B2M','S100A4'))
+
+matrix <- pbmc_data
+matrix_counts <- pbmc_counts
+metadata <- info
+cluster_level <- 'subset'
+threshold <- 0
+regression <- regression.filter
+p_value <- t_ptotal
+fold_change <- t_exptotal
+regression_level <- 'cell'
+n_cores <- 2
+# modes.of.change.cluster <- Calculate_ModesOfChange_MixedEffect(pbmc_data, pbmc_counts, info,
+#                                                                'cluster', 0, regression.filter,t_ptotal,
+#                                                                t_exptotal, 'cell', 1)
+require(doParallel)
+  require(parallel)
+  require(foreach)
+  require(tidyverse)
+  source('/gpfs/gsfs5/users/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/regression_functions.R')
+  
+  library(lme4)
+  library(broom.mixed)
+  library(lmerTest)
+
+Calculate_ModesOfChange_MixedEffect <- function(matrix, matrix_counts, metadata, cluster_level, 
+                                                threshold, regression, p_value, fold_change, 
+                                                regression_level, n_cores) {
+  
+  
+  print('clusters: dataframe
+        column 1 - \'barcode\',
+        column 2 - \'cluster\'
+        column 3 - \'BC_ID\'
+        column 4 - \'Age\'
+        column 5 - \'Sex\'
+        column 6 - \'cluster\'
+        column 7 - \'subset\'
+        column 8 - \'cell\'')
+  
+  # cl <- makeCluster(n_cores)
+  # clusterExport(cl, c("Generate_Regression_Report"))
+  # registerDoParallel(cl, cores = n_cores)
+  
+  #matrix <- pbmc_counts
+  #metadata <- clusters
+  #cluster_level <- 'cluster'
+  #threshold <- 0.1
+  #regression <- regression.cluster
+  #p_value <- t_ptotal
+  #fold_change <- t_exptotal
+  
+  clust <- unique(metadata[,colnames(metadata) == cluster_level])
+  clust <- clust[[1]]
+  clust <- clust[is.na(clust) == F]
+  
+  dfin <- tibble()
+  dfin2 <- tibble()
+  for (l in clust) {
+    
+    cluster.metadata <- metadata %>% filter(get(cluster_level) == l)
+    cluster.cells <- as.character(cluster.metadata$barcode)
+    cluster.top.regression <- regression %>% filter(cluster == l) #& age_p_adj < p_value & abs(co) > fold_change)
+    cluster.top.genes <- cluster.top.regression$gene
+    
+    cluster.exp.mat <- matrix[,cluster.cells]
+    cluster.count.mat <- matrix_counts[,cluster.cells]
+    
+    # comb <- function(...) {
+    #   mapply('rbind', ..., SIMPLIFY=FALSE)
+    # }
+    
+    #listcl <- foreach (i=1:length(cluster.top.genes), .packages='tidyverse', .combine='comb', .multicombine = T) %dopar% {
+    for ( i in c(1:length(cluster.top.genes))) {
+      gene <- cluster.top.genes[i]
+      expression.vector <- as.vector(cluster.exp.mat[as.character(gene),])
+      counts.vector <- as.vector(cluster.count.mat[as.character(gene),])
+      cluster.metadata$expression <- expression.vector
+      cluster.metadata$counts <- counts.vector
+      
+      if (sum(counts.vector) > 0) {
+        
+        ##############################
+        ### Test 1: PERCENT CHANGE ###
+        ##############################
+        
+        # calculate percentage of cells detectable (plot + regression)
+        
+        test1 <<- cluster.metadata
+        #print("#######")
+        #print(test1)
+        #print(class(test1))
+        #print("##########")
+        test1.percents <<- cluster.metadata %>%
+          group_by(Age,Code,Sex) %>%
+          summarise(norm = sum(counts > threshold)/n())
+        test1.percents$norm <<- test1.percents$norm*100
+        test1.percents$mixed <<- substr(test1.percents$Code, 1, 2)
+        # model.1 <- lm(norm ~ Age, data = test1.percents)
+        # regression.1.summary <- Generate_Regression_Report(model.1, gene, l) %>% mutate(mode = 'percent')
+        # 
+        #############
+        #print("test1.percents")
+        #print(summary(test1.percents))
+        #print(class(test1.percents))
+        #print(dim(test1.percents))
+        #print("************")
+        form <- as.formula(norm~Age + (1|mixed) + Sex)
+        model.1 <- lmer(form, REML = T, as.data.frame(test1.percents)) # This is the actual linear model generated, change this to preferred model if necessary
+        #summary(model)
+        print(model.1)
+        print("line183")
+        sum_test <- lmerTest::step(model.1,reduce.fixed = FALSE, reduce.random = FALSE)
+        #print("finished_setp")
+        summary <- broom.mixed::tidy(model.1)
+        summary2 <- broom.mixed::augment(model.1)
+        age_p <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+        co <- as.numeric(summary[2,4])
+        intercept <- as.numeric(summary[1,4])
+        sd <- as.numeric(summary[2,5])
+        regression.1.summary <- data.frame(cluster = l, gene = gene, mode = 'percent', age_p = age_p, co = co, intercept = intercept, sd = sd)
+        #############
+        
+        test2 <<- test1 %>% filter(counts > threshold)
+        test2 <<- as.data.frame(test2)
+        test2$mixed <<- substr(test2$Code, 1, 2)
+        #print("*****TEST 2*****")
+        #print(test2)
+        #print("test2 right before this")
+        if (regression_level == 'cell') {
+          print("regresion level is cell")
+          ############################################
+          ### Test 2: EXPRESSION CHANGE-CELL LEVEL ###
+          ############################################
+          
+          
+          #model.2 <- lm(expression ~ Age, data = test2)
+          #regression.2.summary <- Generate_Regression_Report(model.2, gene, l) %>% mutate(mode = 'expression')
+          
+          if (length(unique(test2$mixed)) > 1) {
+            print("multiple mixed in test 2")
+            print(class(test2))
+            print(dim(test2))
+            #############
+            model.2 <- lmer(expression~Age + (1|mixed) + Sex, REML = T, data=test2) # This is the actual linear model generated, change this to preferred model if necessary
+            #print("just trained model.2")
+            #print(model.2)
+            sum_test <- step(model.2,reduce.fixed = FALSE, reduce.random = FALSE)
+            #print("right after stepping model")
+            summary <- broom.mixed::tidy(model.2)
+            summary2 <- broom.mixed::augment(model.2)
+            #print("summary2 generated")
+            age_p.2 <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+            co.2 <- as.numeric(summary[2,4])
+            intercept.2 <- as.numeric(summary[1,4])
+            sd.2 <- as.numeric(summary[2,5])
+            regression.2.summary <- data.frame(cluster = l, gene = gene, mode = 'expression', age_p = age_p.2, co = co.2, intercept = intercept.2, sd = sd.2)
+            
+            #############
+            
+          }
+          
+          all <- test1.percents %>% mutate(cluster = l, gene = gene)
+          all <- as_tibble(all)
+          print("Cell level finished")
+        } else if (regression_level == 'person') {
+          print("beginning of person block")
+          ##################################################
+          ### Test 2: EXPRESSION CHANGE-PERSON LEVEL     ###
+          ##################################################
+          
+          test1.positive <- test1 %>% filter(expression > threshold)
+          test2 <<- test1.positive %>%
+            group_by(Age) %>%
+            summarise(avg = mean(expression))
+          
+          # Perform regression to determine if the expression changes in single cells:
+          model.2 <- lm(avg ~ Age, data = test2)
+          regression.2.summary <- Generate_Regression_Report(model.2, gene, l) %>% mutate(mode = 'expression')
+          
+          #############
+          mdf <- data.frame(exp = exp, Age = Age, Sex = Sex, mixed = mixed)
+          
+          model <- lmer(exp~Age + (1|mixed) + Sex, REML = T, mdf) # This is the actual linear model generated, change this to preferred model if necessary
+          #summary(model)
+          sum_test <- step(model,reduce.fixed = FALSE, reduce.random = FALSE)
+          summary <- broom.mixed::tidy(model)
+          summary2 <- broom.mixed::augment(model)
+          age_p <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+          co <- as.numeric(summary[2,4])
+          #############
+          
+          all <- test1.percents %>% inner_join(test2, by = 'Age') %>% mutate(cluster = l, gene = gene)
+        }
+        print("right after person block")
+        if (length(unique(test2$mixed)) > 1) {
+          regression.final <- rbind(regression.1.summary, regression.2.summary)
+        }
+        
+      }
+      print("right about to set dfin, dfin2")
+      if (length(unique(test2$mixed)) > 1) {
+        #output <- list(regression.final, all)
+        dfin <- rbind(dfin, regression.final)
+        dfin2 <- bind_rows(dfin2, all)
+      }
+      
+    }
+    
+    dfin <- rbind(dfin, listcl[[1]])
+    dfin2 <- rbind(dfin2, listcl[[2]])
+    
+  }
+  
+  data_list <- list(dfin, dfin2)
+  return(data_list)
+}
+
+modes.of.change.subset <- Calculate_ModesOfChange_MixedEffect(matrix,matrix_counts,metadata,cluster_level,threshold,regression,p_value,fold_change,regression_level,n_cores)
+print(colnames(modes.of.change.subset))
+#modes.of.change.cell <- Calculate_ModesOfChange(pbmc_counts,clusters,'cell',0.1,regression.cell,t_ptotal,t_exptotal,'cell',29)
+
+# Score the modes:
+#score.cluster <- Score_Modes(modes.of.change.cluster, 0.05, 0.05)
+score.subset <- Score_Modes(modes.of.change.subset, 0.05, 0.05)
+#score.cell <- Score_Modes(modes.of.change.cell[[1]], 0.05, 0.05)
+
+# Plot to check:
+ggplot(score.subset, aes(x=`co.x`, y=exp_percent)) +
+  geom_point() +
+  facet_wrap(cluster~.)+
+  coord_cartesian(ylim = c(-1,1))
+
+# # Save Data:
+# 
+write.csv(score.subset, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.subset_logNorm_integrated_examples.csv', sep = ''), row.names = F)
+write.csv(dfin2, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.subset_logNorm_integrated_examples.csv', sep = ''), row.names = F)
+
+print('script 7.0.2 time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r Figure3A}
+# VERSION: fig.3.a_integrated_logNorm; PREVIOUS: 7.0.2_regression_ModesOfChange_integrated_logNorm_examples; STEP: Figure3
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+ptm <- proc.time() # Start the clock!
+
+# LOAD DATA:
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
+pbmc_counts <- Read10X('/data/TCR/10X_Genomics/data/interim/10X_PIPELINE_P1_P4/GEX/aggr_CR4-0-0_crossLongCombined_noNormalize/outs/filtered_feature_bc_matrix')
+data <- readRDS('./data/tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+clusters <- read_csv('./data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000)
+pheno <- read_csv('./data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
+clusters <- clusters %>% inner_join(pheno)
+
+regression <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_subset.csv')
+regression$age_p_adj <- p.adjust(regression$age_p, method = 'BH')
+#regression <- regression %>% filter(age_p_adj < 0.05, abs(co) > log2(1.1)/70)
+  
+mode.regression <- read_csv('/data/TCR/hemanihh/figure_scripts/fig3_out/7.0.2_Regression_RegressionValues10_0.05.subset_logNorm_integrated.csv')
+mode.values <-read_csv('/data/TCR/hemanihh/figure_scripts/fig3_out/7.0.2_Regression_RegressionData10_0.05.subset_logNorm_integrated.csv')
+
+cd8_cells <- clusters %>% filter(Age > 5, cell == 'CD8')
+
+# List Genes to look at:
+gene_list <- c('GZMA','B2M','S100A4')
+regression <- regression %>% filter(gene %in% gene_list)
+genes.combined <- mode.values %>% filter(gene %in% gene_list)
+genes.mode.regression <- mode.regression %>% filter(gene %in% gene_list)
+ranges <- genes.combined %>% group_by(gene) %>% summarize(range = max(norm) - min(norm))
+range_used <- max(ranges$range)
+
+#colors_used <- c('GZMA'='#F8766D','HLA-A'='#00BA38','S100A4'='#619CFF')
+# EM - GZMA - percent
+# 9 - B2M - expression
+#  - S100A4 - both
+
+for (gen in gene_list) {
+  for (sub in c('N','CM','EM','RA','EFF')) {
+    
+    #print(sub)
+    lines_mode <- mode.regression %>% filter(gene == gen, cluster == sub)
+    if (dim(lines_mode)[1]==0){
+      next
+    }
+    percent_graph <- mode.values %>% filter(gene == gen, cluster == sub)
+    print(paste(gen, sub))
+    
+    #percent_graph$gene <- factor(percent_graph$gene, levels = gene_list)
+    #percent_graph <- percent_graph[percent_graph$cluster == sub,]
+    percent_graph$Code <- substr(percent_graph$Code, 1, 2)
+    max_val <- max(percent_graph$norm)
+    min_val <- min(percent_graph$norm)
+    
+    used_cells <- cd8_cells %>% filter(subset == sub)
+    
+    exp <- data[gen,used_cells$barcode]
+    exp_nonzero <- pbmc_counts[gen,used_cells$barcode]
+    exp <- exp[exp_nonzero > 0]
+    used_cells <- used_cells[exp_nonzero > 0,]
+    used_cells$Code <- substr(used_cells$Code, 1, 2)
+    
+    modelled <- tibble(Age = used_cells$Age, expression = exp, Code = used_cells$Code)
+    modelled.summary <- modelled %>% group_by(Age,Code) %>% summarize(avg = mean(expression), sd = sd(expression))
+    #print(paste("precenet_graph",percent_graph))
+    #print(modelled.summary)
+    both_graph <- percent_graph %>% inner_join(modelled.summary, by = c('Age','Code'))
+    scale <- mean(both_graph$norm) / mean(both_graph$avg)
+    #print(paste(both_graph$norm, both_graph$avg))
+    #print(paste(mean(both_graph$norm), mean(both_graph$avg)))
+    #print(paste("scale", scale))
+    if (scale > 1) {
+      scale = scale / 1.1
+    }
+    
+    max_avg <- max(both_graph$avg) * scale
+    min_avg <- min(both_graph$avg) * scale
+    
+    gg <- ggplot() +
+      theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1) + theme(legend.position='none',axis.title.y=element_blank()) +
+      #facet_wrap(gene~., ncol = 3) +
+      coord_cartesian(ylim = c(min(min_avg,min_val), max(max_val,max_avg)),
+                      xlim = c(26,90)) +
+      scale_y_continuous(sec.axis = sec_axis(~./scale, name = "Relative humidity [%]")) +
+      #geom_smooth(data = both_graph, aes(x=Age,y=norm,group=Code), size = 0.15, method = 'lm', se=F, color = 'magenta') +#, se = T) + fill = 'plum3' ,
+      #geom_smooth(data = both_graph, aes(x=Age,y=avg*scale,group=Code), size = 0.15, method = 'lm', se=F, color = 'cornflowerblue') +#, se = T) + fill = 'royalblue3' ,
+      geom_abline(intercept = lines_mode$intercept.x[[1]], 
+                  slope = lines_mode$co.x[[1]], color = 'plum3') +
+      geom_abline(intercept = lines_mode$intercept.y[[1]]* scale, 
+                  slope = lines_mode$co.y[[1]]* scale, color = 'royalblue3') +
+      geom_point(data = both_graph, aes(x=Age,y=norm),  size = 0.01, color = 'plum3') +
+      geom_point(data = both_graph, aes(x=Age,y=avg*scale),  size = 0.01, color = 'royalblue3') +
+      scale_x_continuous(breaks = c(40,60,80)) 
+    gg
+    png(paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_',gen,'_cluster',sub,'_integrated_logNorm_new.png',sep=''), height=38, width=39, units='mm', res = 300)
+    print(gg)
+    dev.off()
+    print(paste("sub",sub,"gen",gen))
+  }
+  print("377")
+}
+
+
+
+
+
+
+# Plot for chosen genes (based on mixed effect line):
+
+#chosen <- genes.mode.regression[c(12,15,5,4),]
+chosen <- genes.mode.regression[c(1,3),]
+for (i in 1:nrow(chosen)) {
+  
+  line1 <- as.numeric(chosen[i,5])
+  line2 <- as.numeric(chosen[i,8])
+  gen <- as.character(chosen[i,2])
+  sub <- as.character(chosen[i,1])
+  
+  scale <- mean(chosen$co.x) / mean(chosen$co.y)
+  
+  gg <- ggplot() +
+    theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1) + #theme(legend.position='none',axis.title.y=element_blank()) +
+    #facet_wrap(gene~., ncol = 3) +
+    #coord_cartesian(ylim = c(min(min_avg,min_val), max(max_val,max_avg)),xlim = c(26,90)) +
+    scale_y_continuous(limits = c(-1,20)) +
+    geom_abline(intercept = 0, slope = line1 , size = 0.15, color = 'magenta') +#, se = T) + fill = 'plum3' ,
+    geom_abline(intercept = 0, slope = line2*scale, size = 0.15, color = 'cornflowerblue') +#, se = T) + fill = 'royalblue3' ,
+    #geom_point(data = both_graph, aes(x=Age,y=norm,color=Code),  size = 0.01) + #color = 'plum3',
+    #geom_point(data = both_graph, aes(x=Age,y=avg*scale,color=Code),  size = 0.01) + #color = 'royalblue3',
+    scale_x_continuous(breaks = c(40,60,80), limits = c(0,90)) 
+  png(paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_',gen,'_cluster',sub,'_integrated_logNorm_TEST.png',sep=''), height=38, width=39, units='mm', res = 300)
+  print(gg)
+  dev.off()
+  
+}
+
+print('script fig.3.a time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r Figure3B_Analysis}
+# VERSION: 7.0.2_regression_ModesOfChange_integrated_logNorm; PREVIOUS: ; STEP: Figure3
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+ptm <- proc.time() # Start the clock!
+
+# LOAD DATA:
+
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
+pbmc_counts <- Read10X('/data/TCR/10X_Genomics/data/interim/10X_PIPELINE_P1_P4/GEX/aggr_CR4-0-0_crossLongCombined_noNormalize/outs/filtered_feature_bc_matrix')
+pbmc_data <- readRDS('./data/tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+#regression_fltr <- 
+pheno <- read_csv('./data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
+info <- read_csv('./data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000)
+info <- info %>% inner_join(pheno, by = 'cluster')
+info <- info %>% filter(BC_ID != 1 & info$BC_ID != 2 & cluster != 6  & cell == 'CD8')
+
+clusters <- info %>% inner_join(pheno, by = 'cluster')
+
+#regression.cluster <- read_csv('./data/interim/regression/5.0.5_regression_10perc_01FDR_logNorm_OneGrp.csv', guess_max = 10000)
+#regression.subset <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_subset.csv')
+#regression.cell <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_cell.csv')
+regression.cluster <- Read_chunks_csv('./data/interim/regression/5.0.6_ME_Int_OneGrp_logNorm_AllStats_scripts_saveChunks_cluster')
+regression.cluster <- regression.cluster %>% group_by(cluster) %>% mutate(age_p_adj = p.adjust(age_p, method = 'BH'))
+
+t_exptotall <- 10
+t_exptotal <- log2(1 + (t_exptotall/100))/70
+t_ptotal   <- 0.05
+
+#######################################
+###### Calculate Types of Change ######
+#######################################
+
+# Regress the Modes:
+#modes.of.change.cluster <- Calculate_ModesOfChange(pbmc_counts,clusters,'cluster',0.1,regression.cluster,t_ptotal,t_exptotal,'cell',29)
+
+#regression.filter <- #read_csv('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/interim/regression/5.0.5_regression_10perc_01FDR_logNorm_OneGrp.csv', guess_max = 10000)
+regression.filter <- regression.cluster %>% filter(age_p_adj < t_ptotal, abs(co) > t_exptotal)
+
+matrix <- pbmc_data
+matrix_counts <- pbmc_counts
+metadata <- info
+cluster_level <- 'cluster'
+threshold <- 0
+regression <- regression.filter
+p_value <- t_ptotal
+fold_change <- t_exptotal
+regression_level <- 'cell'
+n_cores <- 1
+
+# modes.of.change.cluster <- Calculate_ModesOfChange_MixedEffect(pbmc_data, pbmc_counts, info,
+#                                                                'cluster', 0, regression.filter,t_ptotal,
+#                                                                t_exptotal, 'cell', 1)
+
+# Calculate_ModesOfChange_MixedEffect <- function(matrix, matrix_counts, metadata, cluster_level, 
+#                                                 threshold, regression, p_value, fold_change, 
+#                                                 regression_level, n_cores) {
+#   
+  
+  print('clusters: dataframe
+        column 1 - \'barcode\',
+        column 2 - \'cluster\'
+        column 3 - \'BC_ID\'
+        column 4 - \'Age\'
+        column 5 - \'Sex\'
+        column 6 - \'cluster\'
+        column 7 - \'subset\'
+        column 8 - \'cell\'')
+  
+  require(doParallel)
+  require(parallel)
+  require(foreach)
+  require(tidyverse)
+  source('/gpfs/gsfs5/users/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/regression_functions.R')
+  
+  library(lme4)
+  library(broom.mixed)
+  library(lmerTest)
+  
+  # cl <- makeCluster(n_cores)
+  # clusterExport(cl, c("Generate_Regression_Report"))
+  # registerDoParallel(cl, cores = n_cores)
+  
+  #matrix <- pbmc_counts
+  #metadata <- clusters
+  #cluster_level <- 'cluster'
+  #threshold <- 0.1
+  #regression <- regression.cluster
+  #p_value <- t_ptotal
+  #fold_change <- t_exptotal
+  
+  clust <- unique(metadata[,colnames(metadata) == cluster_level])
+  clust <- clust[[1]]
+  clust <- clust[is.na(clust) == F]
+  
+  dfin <- tibble()
+  dfin2 <- tibble()
+  for (l in clust) {
+    
+    cluster.metadata <- metadata %>% filter(get(cluster_level) == l)
+    cluster.cells <- as.character(cluster.metadata$barcode)
+    cluster.top.regression <- regression %>% filter(cluster == l & age_p_adj < p_value & abs(co) > fold_change)
+    cluster.top.genes <- cluster.top.regression$gene
+    
+    cluster.exp.mat <- matrix[,cluster.cells]
+    cluster.count.mat <- matrix_counts[,cluster.cells]
+    
+    # comb <- function(...) {
+    #   mapply('rbind', ..., SIMPLIFY=FALSE)
+    # }
+    
+    #listcl <- foreach (i=1:length(cluster.top.genes), .packages='tidyverse', .combine='comb', .multicombine = T) %dopar% {
+    for ( i in c(1:length(cluster.top.genes))) {
+      gene <- cluster.top.genes[i]
+      expression.vector <- as.vector(cluster.exp.mat[as.character(gene),])
+      counts.vector <- as.vector(cluster.count.mat[as.character(gene),])
+      cluster.metadata$expression <- expression.vector
+      cluster.metadata$counts <- counts.vector
+      
+      if (sum(counts.vector) > 0) {
+        
+        ##############################
+        ### Test 1: PERCENT CHANGE ###
+        ##############################
+        
+        # calculate percentage of cells detectable (plot + regression)
+        
+        test1 <- cluster.metadata
+        test1.percents <- cluster.metadata %>%
+          group_by(Age,Code,Sex) %>%
+          summarise(norm = sum(counts > threshold)/n())
+        test1.percents$norm <- test1.percents$norm*100
+        test1.percents$mixed <- substr(test1.percents$Code, 1, 2)
+        # model.1 <- lm(norm ~ Age, data = test1.percents)
+        # regression.1.summary <- Generate_Regression_Report(model.1, gene, l) %>% mutate(mode = 'percent')
+        # 
+        #############
+        model.1 <- lmer(norm~Age + (1|mixed) + Sex, REML = T, test1.percents) # This is the actual linear model generated, change this to preferred model if necessary
+        #summary(model)
+        sum_test <- step(model.1,reduce.fixed = FALSE, reduce.random = FALSE)
+        summary <- broom.mixed::tidy(model.1)
+        summary2 <- broom.mixed::augment(model.1)
+        age_p <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+        co <- as.numeric(summary[2,4])
+        regression.1.summary <- data.frame(cluster = l, gene = gene, mode = 'percent', age_p = age_p, co = co)
+        #############
+        
+        if (regression_level == 'cell') {
+          ############################################
+          ### Test 2: EXPRESSION CHANGE-CELL LEVEL ###
+          ############################################
+          
+          test2 <- test1 %>% filter(counts > threshold)
+          test2 <- as.data.frame(test2)
+          test2$mixed <- substr(test2$Code, 1, 2)
+          
+          #model.2 <- lm(expression ~ Age, data = test2)
+          #regression.2.summary <- Generate_Regression_Report(model.2, gene, l) %>% mutate(mode = 'expression')
+          
+          if (length(unique(test2$mixed)) > 1) {
+            
+            #############
+            model.2 <- lmer(expression~Age + (1|mixed) + Sex, REML = T, test2) # This is the actual linear model generated, change this to preferred model if necessary
+            #summary(model)
+            sum_test <- step(model.2,reduce.fixed = FALSE, reduce.random = FALSE)
+            summary <- broom.mixed::tidy(model.2)
+            summary2 <- broom.mixed::augment(model.2)
+            age_p.2 <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+            co.2 <- as.numeric(summary[2,4])
+            regression.2.summary <- data.frame(cluster = l, gene = gene, mode = 'expression', age_p = age_p.2, co = co.2)
+            
+            #############
+            
+          }
+          
+          all <- test1.percents %>% mutate(cluster = l, gene = gene)
+          all <- as_tibble(all)
+        } else if (regression_level == 'person') {
+          ##################################################
+          ### Test 2: EXPRESSION CHANGE-PERSON LEVEL     ###
+          ##################################################
+          
+          test1.positive <- test1 %>% filter(expression > threshold)
+          test2 <- test1.positive %>%
+            group_by(Age) %>%
+            summarise(avg = mean(expression))
+          
+          # Perform regression to determine if the expression changes in single cells:
+          model.2 <- lm(avg ~ Age, data = test2)
+          regression.2.summary <- Generate_Regression_Report(model.2, gene, l) %>% mutate(mode = 'expression')
+          
+          #############
+          mdf <- data.frame(exp = exp, Age = Age, Sex = Sex, mixed = mixed)
+          
+          model <- lmer(exp~Age + (1|mixed) + Sex, REML = T, mdf) # This is the actual linear model generated, change this to preferred model if necessary
+          #summary(model)
+          sum_test <- step(model,reduce.fixed = FALSE, reduce.random = FALSE)
+          summary <- broom.mixed::tidy(model)
+          summary2 <- broom.mixed::augment(model)
+          age_p <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+          co <- as.numeric(summary[2,4])
+          #############
+          
+          all <- test1.percents %>% inner_join(test2, by = 'Age') %>% mutate(cluster = l, gene = gene)
+        }
+        if (length(unique(test2$mixed)) > 1) {
+          regression.final <- rbind(regression.1.summary, regression.2.summary)
+        }
+        
+      }
+      
+      if (length(unique(test2$mixed)) > 1) {
+        #output <- list(regression.final, all)
+        dfin <- rbind(dfin, regression.final)
+        dfin2 <- bind_rows(dfin2, all)
+      }
+      
+    }
+    
+    #dfin <- rbind(dfin, listcl[[1]])
+    #dfin2 <- rbind(dfin2, listcl[[2]])
+    
+  }
+  
+  data_list <- list(dfin, dfin2)
+  #return(data_list)
+#}
+
+
+#modes.of.change.subset <- Calculate_ModesOfChange(pbmc_counts,clusters,'subset',0.1,regression.subset,t_ptotal,t_exptotal,'cell',29)
+#modes.of.change.cell <- Calculate_ModesOfChange(pbmc_counts,clusters,'cell',0.1,regression.cell,t_ptotal,t_exptotal,'cell',29)
+
+# Score the modes:
+#score.cluster <- Score_Modes(modes.of.change.cluster, 0.05, 0.05)
+score.subset <- Score_Modes(dfin, 0.05, 0.05)
+#score.cell <- Score_Modes(modes.of.change.cell[[1]], 0.05, 0.05)
+
+# Plot to check:
+ggplot(score.subset, aes(x=`co.x`, y=exp_percent)) +
+  geom_point() +
+  facet_wrap(cluster~.)+
+  coord_cartesian(ylim = c(-1,1))
+
+version <- "7.0.2"
+# # Save Data:
+# 
+write.csv(score.subset, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.cell_logNorm_integrated.csv', sep = ''), row.names = F)
+write.csv(dfin2, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.cell_logNorm_integrated.csv', sep = ''), row.names = F)
+
+# write.csv(score.subset, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.subset.csv', sep = ''), row.names = F)
+# write.csv(modes.of.change.subset[[2]], paste('./data/interim/regression/',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.subset.csv', sep = ''), row.names = F)
+# 
+# write.csv(score.cell, paste('./data/interim/regression/',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.cell.csv', sep = ''), row.names = F)
+# write.csv(modes.of.change.cell[[2]], paste('./data/interim/regression/',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.cell.csv', sep = ''), row.names = F)
+
+# Functions: 
+# 
+
+```
+
+
+```{r Figur3B}
+# VERSION: fig.3.b_integrated_logNorm; PREVIOUS: fig.3.a_integrated_logNorm; STEP: Figure3
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
+ptm <- proc.time() # Start the clock!
+
+# LOAD DATA:
+
+
+version <- 'fig.3.b'
+
+# set directories:
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
+
+# Load data:
+t_exptotall <- 10
+t_ptotal   <- 0.05
+modes.data <- read_csv('./data/interim/regression/7.0.2_Regression_RegressionValues10_0.05.cluster_logNorm_integrated.csv')
+pheno <- read_csv('./data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
+
+regression <- read_csv('./data/interim/regression/new_age_regression_removeGenes.csv')
+regression$age_p_adj <- p.adjust(regression$age_p, method = 'BH')
+genes_up <- regression[regression$co > log2(1.1)/70 & regression$age_p_adj < 0.05,]$gene
+
+1 / sqrt(3)
+sqrt(3)
+
+modes.data <- modes.data %>% mutate(percent = co.x*70, expression = 100*(2^(co.y*70) - 1))
+modes.data.rescore <- modes.data %>% 
+  mutate(type_new = ifelse(expression < 5 & percent > 5, 'percent', ifelse(expression > 5 & percent < 5, 'expression', 'both'))) %>%
+  filter(gene %in% genes_up) %>% filter(percent > 5 | expression > 5)
+modes.data.rescore$cluster <- factor(modes.data.rescore$cluster, levels = pheno$cluster[2:10])
+modes.data.rescore$type_new <- factor(modes.data.rescore$type_new, levels = c('percent', 'expression','both'))
+
+# Plot FACS Plots:
+ggplot(modes.data.rescore, aes(x = percent, y = expression)) + 
+  theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1, legend.position = 'right') +
+  theme(strip.background = element_blank(), strip.text = element_blank()) +
+  geom_hline(yintercept = 0, size = 0.3, color = 'grey80') +
+  geom_vline(xintercept = 0, size = 0.3, color = 'grey80') +
+  geom_point(size = 0.05, aes(color = type_new)) +
+  facet_wrap(cluster~., ncol = 3) +
+  coord_cartesian(ylim = c(-20,70), xlim = c(-10,35)) + 
+  geom_vline(xintercept = 5, size = 0.2, color = 'black') +
+  geom_hline(yintercept = 5, size = 0.2, color = 'black') +
+  scale_color_manual(values = c('plum3','royalblue3','grey30')) +
+  xlab(label = 'Change in Percentage of Expressing Cells (%)') + ylab(label = 'Change in Expression Level (%)')
+  #geom_segment(aes(x = 0, xend = 60, y = 0, yend = (1 / sqrt(3))*60)) +
+  #geom_segment(aes(x = 0, xend = 60, y = 0, yend = sqrt(3)*60))
+ggsave(paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Modes_ScatterPlot_integrated_logNorm.png',sep=''), height = 117, width = 117, units = 'mm', dpi = 300)
+
+quadrant_percents <- modes.data.rescore %>%
+  group_by(cluster, type_new) %>%
+  summarise(num = n()) %>%
+  group_by(cluster) %>%
+  mutate(percent = num/sum(num))
+write.csv(quadrant_percents, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'.0_ScatterPlot_GeneBins_integrated_logNorm.csv',sep=''))
+
+ggplot(modes.data.rescore, aes(x = percent, y = expression, color = cluster)) +
+  theme_minimal() + theme_bw(base_size = 20) + 
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0, color = 'grey70') +
+  geom_vline(xintercept = 0, color = 'grey70') +
+  geom_abline(intercept = 0, slope = 1 / sqrt(3), color = 'red') +
+  geom_abline(intercept = 0, slope = sqrt(3), color = 'red') +
+  coord_cartesian(x= c(-20,40), y = c(-20,40)) +
+  facet_wrap(cluster~., ncol = 4) +
+  theme(legend.position='none',strip.background=element_blank(),strip.text.x=element_blank()) +
+  #coord_cartesian(xlim = c(-30,60), ylim = c(-30,60)) +
+  theme(strip.background = element_blank(), strip.text.x = element_blank()) + theme(aspect.ratio=1) +
+  scale_color_manual(values = c("2" = "green", "0" = "forestgreen", "3" = "deepskyblue", "5" = "dodgerblue3", "7" = "gold2",
+                                 "9" = "coral2", "1" = "orange", "4" = "deeppink2", "6" = "darkorchid3", "10" = "red3")) +
+  #scale_color_manual(values = c("N" = "forestgreen", "CM" = "dodgerblue3", "EM" = "Red3", "RA" = "purple3")) +
+  theme(panel.grid.minor = element_blank()) #+ #, panel.grid.minor = element_blank()) #+
+  #scale_x_log10(breaks = c(10,25,100,250,500))
+#geom_text(data = modes.data.rescore[modes.data.rescore$co.x < 0 & modes.data.rescore$co.y < 0,], aes(label=gene),hjust=1, vjust=0)
+ggsave(paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'.0_ScatterPlot_ModesOfChangeUpregulated_Remove<5.',t_exptotall,'.',t_ptotal,'.cut5.incNone.incNA.png',sep=''), height = 8, width = 12, units = 'in',dpi = 600)
+
+
+modes.data.rescore$type <- 'o'
+modes.data.rescore[(modes.data.rescore$co.x)*70 > 5 & 100*(2^(modes.data.rescore$co.y*70)-1) > 5,]$type <- 'both'
+modes.data.rescore[(modes.data.rescore$co.x)*70 > 5 & 100*(2^(modes.data.rescore$co.y*70)-1) < 5,]$type <- 'percent'
+modes.data.rescore[100*(2^(modes.data.rescore$co.y*70)-1) > 5 & (modes.data.rescore$co.x)*70 < 5,]$type <- 'expression'
+quadrant_percents <- modes.data.rescore %>%
+  group_by(cluster, type) %>%
+  summarise(num = n()) %>%
+  group_by(cluster) %>%
+  mutate(percent = num/sum(num))
+write.csv(quadrant_percents, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'.0_ScatterPlot_GeneBins.csv',sep=''))
+write.csv(modes.data.rescore, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Dataframe_',t_exptotall,'.',t_ptotal,'.cut5.incNone.incNA.csv',sep=''))
+
+print('script fig.3.b time: ')
+proc.time() - ptm # Stop the clock
+```
+
+```{r Figure3C}
+
+# GET FROM WENG LAB
+
+```
+
+```{r Figure3D}
+# VERSION: 7.5.0_Regression_GSEA_Enrichmodes_integrated_logNorm; PREVIOUS: ; STEP: Figure3
+# 1) Parse single-cell counts and metadata
+# 2) Plot tSNE projection
+ptm <- proc.time() # Start the clock!
+
+# LOAD DATA:
+
+setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
+gsea.subsets <- readRDS('./data/interim/regression/7.3.0_GSEA_Subsets_5BinsPerson_ClusterCells_integrated_logNorm.Rds')
+modes.data <- read_csv('./data/interim/regression/7.0.2_Regression_RegressionValues10_0.05.subset_logNorm_integrated.csv')
+regression <- Read_chunks_csv('./data/interim/regression/5.0.6_ME_Int_OneGrp_logNorm_AllStats_scripts_saveChunks_subset')
+regression <- regression %>% mutate(age_p_adj = p.adjust(age_p, method = 'BH'))
+
+regression <- regression %>% filter(abs(co) > log2(1.1)/70, age_p_adj < 0.05)
+#genes_up <- regression[regression$co > 0,]$gene
+genes_up <- regression %>% filter(co > 0)
+
+# Filter to 4 subsets
+# transform variables to percentages
+modes.data <- modes.data %>% filter(cluster %in% c('N','CM','EM','RA'))
+modes.data <- modes.data %>% mutate(percent = co.x*70, expression = 100*(2^(co.y*70) - 1))
+# For Division by lines:
+# modes.data.rescore <- modes.data %>% 
+#   mutate(type_new = ifelse(expression < percent*(1 / sqrt(3)), 'percent', ifelse(expression > percent*sqrt(3), 'expression', 'both'))) %>%
+#   filter(gene %in% genes_up) %>% filter(percent > 0 | expression > 0)
+modes.data.rescore <- modes.data %>% 
+  mutate(type_new = ifelse(expression > 5 & percent < 5, 'expression', ifelse(expression < 5 & percent > 5, 'percent', ifelse(expression >= 5 & percent >= 5, 'both', 'none')))) %>%
+  inner_join(genes_up, by = c('cluster','gene')) %>% filter(percent > 5 | expression > 5) %>% filter(type_new != 'none')
+modes.data.rescore$cluster <- factor(modes.data.rescore$cluster, levels = c('N','CM','EM','RA'))
+modes.data.rescore$type_new <- factor(modes.data.rescore$type_new, levels = c('percent', 'expression','both'))
+
+write.csv(modes.data.rescore, '/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/7.5.0_ModesRescored_integrated_logNorm_subset.csv', row.names = F)
+
+ggplot(modes.data.rescore, aes(x = percent, y = expression)) + 
+  theme_minimal() + theme_bw(base_size = 6) + theme(aspect.ratio = 1, legend.position = 'right') +
+  theme(strip.background = element_blank(), strip.text = element_blank()) +
+  geom_hline(yintercept = 0, size = 1, color = 'grey80') +
+  geom_vline(xintercept = 0, size = 1, color = 'grey80') +
+  geom_point(size = 0.5, aes(color = type_new)) +
+  facet_wrap(cluster~., ncol = 2) +
+  coord_cartesian(ylim = c(-20,60), xlim = c(-10,35)) +
+  geom_hline(yintercept = 5) +
+  geom_vline(xintercept = 5)
+  #geom_segment(aes(x = 0, xend = 60, y = 0, yend = (1 / sqrt(3))*60)) +
+  #geom_segment(aes(x = 0, xend = 60, y = 0, yend = sqrt(3)*60))
+ggsave('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/7.5.0_GSEA_Modes_ScatterPlot_integrated_logNorm_subsets_15perc.png', height = 75, width = 85, units = 'mm', dpi = 600)
+
+modes.summary <- modes.data.rescore %>% group_by(cluster, type_new) %>% summarize(num = n()) %>% 
+  group_by(cluster) %>% mutate(norm = num / sum(num))
+
+ggplot(modes.summary, aes(x=cluster, y=norm, fill = type_new, label = num)) +
+  theme_minimal() + theme_bw(base_size = 6) + theme(legend.position = 'none') +
+  geom_bar(stat = 'identity', position = 'fill') +
+  geom_text(size = 2, color = 'black', position = position_stack(vjust = 0.5))
+ggsave('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/7.5.0_GSEA_Modes_BarPlot_integrated_logNorm_subsets_15perc.png', height = 39, width = 85, units = 'mm', dpi = 600)
+
+
+df_matches <- tibble()
+gsea_combine <- tibble()
+for (subset in c('N','CM','EM','RA')){
+  df.gsea <- gsea.subsets[[paste(subset,'.df',sep='')]]
+  gsea_append <- df.gsea %>% mutate(cluster = subset)
+  gsea_combine <- rbind(gsea_combine, gsea_append)
+  for (mode in c('percent','both','expression')) {
+    mode.genes <- modes.data.rescore %>% filter(cluster == subset & type_new == mode) 
+    mode.gene <- mode.genes$gene
+    
+    total_genes_go <- unique(unlist(str_split(df.gsea$core_enrichment, '/')))
+    total_length <- length(total_genes_go)
+    
+    for (i in 1:nrow(df.gsea)) {
+      gene.gsea <- df.gsea[i,]$core_enrichment
+      gene.split <- unlist(strsplit(gene.gsea, '/'))
+      gene_convert <- bitr(gene.split, fromType = 'ENTREZID', toType = 'SYMBOL', OrgDb = 'org.Hs.eg.db')
+      gene_symbol <- gene_convert$SYMBOL
+      
+      overlap <- sum(mode.gene %in% gene_symbol)
+      overlap_genes <- paste(intersect(gene_symbol, mode.gene), collapse = ', ')
+      
+      df_append <- tibble(mode = mode, cluster = subset, cat = df.gsea[i,]$ID, total_length = total_length, go_length = length(gene_symbol), mode_length = length(mode.gene), overlap = overlap, overlap_genes = overlap_genes)
+      df_matches <- rbind(df_matches, df_append)
+    }
+  }
+}
+
+df_matches <- df_matches %>% mutate(enrichment = (overlap / mode_length) / (go_length / total_length))
+df_matches$ID <- df_matches$cat
+# Combine enrichment of modes and gsea:
+
+gsea_all <- gsea_combine %>% inner_join(df_matches, by = c('cluster','ID'))
+
+df_match_both <- df_matches %>% dplyr::select(mode, cluster, ID, total_length, go_length, mode_length, overlap, overlap_genes, enrichment) %>% filter(mode == 'both')
+df_match_percent <- df_matches %>% dplyr::select(mode, cluster, ID, mode_length, overlap, overlap_genes, enrichment) %>% filter(mode == 'percent')
+df_match_expression <- df_matches %>% dplyr::select(mode, cluster, ID, mode_length, overlap, overlap_genes, enrichment) %>% filter(mode == 'expression')
+df_match_all <- inner_join(df_match_both, df_match_percent, by = c('cluster','ID')) %>% inner_join(df_match_expression, by = c('cluster','ID'))
+
+gsea_split_all <- gsea_combine %>% inner_join(df_match_all, by = c('cluster','ID'))
+write.csv(gsea_split_all, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Modes_GSEAModesEnrichment_integrated_logNorm_subsets_10perc.csv',sep=''))
+
+# Isolate Most Enriched Increasing Results for each Mode:
+final_isolates <- tibble()
+gsea_mod <- gsea_split_all %>% mutate(mode_comb = overlap.y + overlap, enrich_sum = enrichment.x + enrichment.y + enrichment) %>%
+  mutate(p_perc = enrichment.y / enrich_sum, e_perc = enrichment / enrich_sum, b_perc = enrichment.x / enrich_sum)
+for (subset in c('N','CM','EM','RA')) {
+  for (mode in c('both', 'percent', 'expression')) {
+    isolate <- gsea_mod %>% filter(cluster == subset & NES > 0 & qvalues < 0.1)
+    if (mode == 'both') {
+      isolate <- isolate %>% filter(overlap.x > 1 & p_perc < 0.6 & e_perc < 0.6) #%>% top_n(10, wt = dplyr::desc(mode_comb))
+    } else if (mode == 'percent') {
+      isolate <- isolate %>% filter(overlap.y > 1 & p_perc > 0.6) #& overlap.x == 0 & overlap == 0)
+    } else if (mode == 'expression') {
+      isolate <- isolate %>% filter(overlap > 1 & e_perc > 0.6) #& overlap.x == 0 & overlap.y == 0)
+    }
+
+    if (nrow(isolate) > 0) {
+      isolate$mode_enriched <- mode
+      final_isolates <- rbind(final_isolates, isolate)
+    }
+  }
+}
+
+# Enrich the Second way: (add 'both' genes to the other categories)
+# gsea_mod <- gsea_split_all %>% mutate(mode_comb = overlap.y + overlap, enrich_sum = enrichment.x + enrichment.y + enrichment + enrichment.x) %>% 
+#   mutate(p_perc = (enrichment.y + enrichment.x) / enrich_sum, e_perc = (enrichment + enrichment.x) / enrich_sum, b_perc = (enrichment.x + enrichment.x) / enrich_sum)
+# for (subset in c('N','CM','EM','RA')) {
+#   for (mode in c('both', 'percent', 'expression')) {
+#     isolate <- gsea_mod %>% filter(cluster == subset & NES > 0 & qvalues < 0.1)
+#     if (mode == 'both') {
+#       isolate <- isolate %>% filter(overlap.x > 1 & p_perc < 0.6 & e_perc < 0.6) #%>% top_n(10, wt = dplyr::desc(mode_comb))
+#     } else if (mode == 'percent') {
+#       isolate <- isolate %>% filter(overlap.y > 1 & p_perc > 0.6) #& overlap.x == 0 & overlap == 0)
+#     } else if (mode == 'expression') {
+#       isolate <- isolate %>% filter(overlap > 1 & e_perc > 0.6) #& overlap.x == 0 & overlap.y == 0)
+#     }
+#     
+#     if (nrow(isolate) > 0) {
+#       isolate$mode_enriched <- mode
+#       final_isolates <- rbind(final_isolates, isolate)
+#     }
+#   }
+# }
+
+summary_isolates <- final_isolates %>% group_by(cluster, mode_enriched) %>% summarize(n())
+summary_overlap_all <- final_isolates %>% group_by(ID,Description,mode_enriched) %>% summarize(num = n())
+final_isolates <- final_isolates %>% inner_join(summary_overlap_all, by = c('ID','Description','mode_enriched'))
+
+for (i in c(1:nrow(final_isolates))) {
+  genes <- final_isolates[i,]$core_enrichment
+  gene.split <- unlist(strsplit(genes, '/'))
+  gene_convert <- bitr(gene.split, fromType = 'ENTREZID', toType = 'SYMBOL', OrgDb = 'org.Hs.eg.db')
+  gene_symbol <- gene_convert$SYMBOL
+  
+  
+  final_isolates[i,]$core_enrichment <- paste(gene_symbol, collapse = '/')
+}
+write.csv(final_isolates, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Modes_GSEAModesEnrichment_trim_integrated_logNorm_subsets_10perc.csv',sep=''))
+# final_isolates <- read_csv(paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Modes_GSEAModesEnrichment_trim_integrated_logNorm_subsets_10perc.csv',sep=''))
+
+chosen_overlap_all <- final_isolates %>% group_by(ID,Description,mode_enriched) %>% summarize(num = n()) %>% group_by(mode_enriched) %>%
+  top_n(5, wt = num) %>% dplyr::sample_n(5) %>% dplyr::select(ID,mode_enriched) %>% inner_join(gsea_mod[gsea_mod$NES > 0,], by = 'ID')
+chosen_overlap_all$mode_enriched <- factor(chosen_overlap_all$mode_enriched, levels = c('percent','expression','both'))
+
+# PLOT THE GRAPHS FOR GSEA VS CLUSTER VS MODE:
+ggplot(chosen_overlap_all, aes(x = cluster, y = Description)) +
+  theme_minimal() + theme_bw(base_size = 10) +
+  geom_point(aes(size = NES, color = qvalues)) +
+  facet_wrap(mode_enriched~., ncol = 1, scales = 'free_y') +
+  scale_color_distiller(palette = 'BuGn') +
+  theme(legend.position = 'bottom', panel.spacing = unit(0, "lines"))
+#ggsave('./figures/exploratory_figures/regression/7.5.0_GSEA_ModesBubblePlot.png', height = 7, width = 7, units = 'in', dpi = 600)
+
+
+# Plot chosen gene sets:
+chosen <- read_csv('./data/external/200926_SelectedGSEA_overlap.csv') %>% filter(is.na(ID) == F)
+chosen <- chosen %>% dplyr::select(ID, cluster, mode_enriched) %>% distinct() %>% inner_join(final_isolates[,-36])
+#write.csv(chosen, paste('./data/interim/regression/',version,'_Modes_GSEAModesEnrichment_trim_integrated_logNorm_subsets_10perc_GenesOverlap.csv',sep=''))
+
+#enriched_df <- final_isolates %>% dplyr::select(ID,mode_enriched,num) 
+#plot_chosen <- gsea_split_all %>% inner_join(enriched_df, by =  c('ID')) %>% filter(ID %in% chosen, NES > 0, qvalues < 0.1)
+plot_chosen <- chosen
+subsets <- tibble(cluster = c('N','CM','EM','RA'), alias = c('N', 'SCM/CM', 'EM1/2/3', 'RA1/2'))
+plot_chosen <- plot_chosen %>% inner_join(subsets, by = 'cluster')
+plot_chosen$desc_setsize <- plot_chosen$Description#paste(plot_chosen$Description, ' (',plot_chosen$setSize,')', sep='')
+
+# Rank the Genes based on which GO functions they appear in, then select the top5 ranked genes:
+descript_final <- tibble()
+for (descript in unique(plot_chosen$desc_setsize)) {
+
+  collapsing_genes <- plot_chosen %>% filter(desc_setsize == descript)
+  list_final <- c()
+  for (i in 1:nrow(collapsing_genes)) {
+    if (collapsing_genes[i,]$mode_enriched == 'expression') {
+      gene_used <- strsplit(collapsing_genes[i,]$overlap_genes, ', ')
+    } else if (collapsing_genes[i,]$mode_enriched == 'percent') {
+      gene_used <- strsplit(collapsing_genes[i,]$overlap_genes.y, ', ')
+    } else if (collapsing_genes[i,]$mode_enriched == 'both') {
+      gene_used <- strsplit(collapsing_genes[i,]$overlap_genes.x, ', ')
+    }
+    
+    gene_used <- unlist(gene_used)
+    list_final <- c(list_final, gene_used)
+  }
+  if (max(table(list_final)) == 1) {
+    gene_shared <- unique(list_final[table(list_final) > 0])
+  } else if (max(table(list_final)) == 2) {
+    gene_shared <- unique(list_final[table(list_final) > 1])
+  } else if (max(table(list_final)) > 2) {
+    gene_shared <- unique(list_final[table(list_final) > 2])
+  }
+  
+  plot_shared <- gene_shared[1:5]
+  plot_shared <- plot_shared[is.na(plot_shared) == F]
+  add.tibble <- tibble(desc_setsize = descript, enriched_genes = paste(plot_shared, collapse = ','))
+  descript_final <- rbind(descript_final, add.tibble)
+}
+
+
+plot_chosen <- plot_chosen %>% inner_join(descript_final, by = 'desc_setsize')
+write.csv(plot_chosen, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Modes_GSEAModesEnrichment_trim_integrated_logNorm_subsets_10perc_ChosenGraphData.csv',sep=''))
+
+
+plot_chosen$cluster <- factor(plot_chosen$cluster, levels = rev(c('RA','EM','CM','N')))
+plot_chosen$mode_enriched <- factor(plot_chosen$mode_enriched, c('percent','expression','both'))
+plot_chosen <- plot_chosen %>% arrange(mode_enriched, desc(cluster))
+plot_chosen$ID <- factor(plot_chosen$ID, levels = unique(c(plot_chosen$ID)))
+#plot_chosen$Description <- factor(plot_chosen$Description, levels = unique(plot_chosen$Description))
+
+plot_chosen$desc_setsize <- factor(plot_chosen$desc_setsize, levels = rev(unique(chosen$Description)))
+
+
+plot_chosen$alias <- factor(plot_chosen$alias, levels = c('N', 'SCM/CM', 'EM1/2/3', 'RA1/2'))
+#plot_chosen$short <- substr(plot_chosen$enriched_genes, 1, 33)
+ggplot(plot_chosen, aes(x=desc_setsize, y=alias)) +
+  theme_minimal() + theme_bw(base_size = 14) +
+  geom_point(aes(size = NES, color = -log10(qvalues))) +
+  geom_text(aes(desc_setsize, y = Inf, label = enriched_genes, size =1.55), data = plot_chosen, hjust = -0.05) +
+  coord_flip(clip = 'off') +
+  scale_y_discrete(position = 'left') +
+  theme(plot.margin = margin(2, 325, 2, 2, unit = "pt")) +
+  facet_grid(mode_enriched~., scales = 'free_y', space = 'free_y', switch = 'y') +
+  scale_color_gradient(high = 'red', low = 'gold') +
+  #geom_rect(aes(xmin = 0, xmax = ymin = 0), color = 'black')
+  theme(strip.background = element_rect(fill = 'white'), strip.placement = 'outside') +
+  theme(legend.position = 'left', panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.spacing = unit(0, "mm"), axis.text.x = element_text(angle = 70, hjust = 1)) 
+ggsave('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/7.5.0_GSEA_ModesBubblePlot_chosen_fitted_integrated_logNorm_subset.png', height = 115, width = 325, units = 'mm', dpi = 600)
+
+
+ggplot(plot_chosen, aes(x=Description, y=NES)) +
+  theme_minimal() + theme_bw(base_size = 10) +
+  geom_point(aes(size = -log10(qvalues), color = cluster, group = cluster), position = position_dodge(width=0)) +
+  coord_flip() +
+  scale_y_discrete(position = 'right') +
+  facet_grid(mode_enriched~., scales = 'free_y', space = 'free_x') +
+  #scale_color_gradient(high = 'red', low = 'gold') +
+  theme(legend.position = 'bottom', panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.spacing = unit(0, "lines"), axis.text.x = element_text(angle = 70, hjust = 1)) 
+ggsave('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/7.5.0_GSEA_ModesBubblePlot_chosen_NES_integrated_logNorm.svg', height = 250, width = 200, units = 'mm', dpi = 600)
+
+print('script 7.5.0 time: ')
+proc.time() - ptm # Stop the clock
+```
+

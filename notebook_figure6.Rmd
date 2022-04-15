@@ -1,0 +1,276 @@
+---
+title: "Figure6"
+author: "Humza Hemani"
+output: html_notebook
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+
+# Data Repo
+knitr::opts_knit$set(root.dir = normalizePath("/home/jon/Documents/weng_lab/figure_repo")) 
+
+```
+
+```{r Figure6 Analysis}
+# 7.0.0_ageChange
+#rm(list=ls())
+library(tidyverse)
+library(mpath)
+library(glmnet)
+library(glmnetUtils)
+library(MASS)
+
+# Load Data:
+genome_basepair_size <- 3099750718
+
+# mutations:
+suppressMessages({ # suppress the csv loading messages
+# load step 9 output
+mutations_cross <- read_csv('./cross_mutations.csv', guess_max = 100000) %>%
+   filter(is.na(umi_fraction_filter) == F) %>% dplyr::select(Chr, POS, REF, ALT, GENE, donor, bc)
+mutations_longi <- read_csv('./longi_mutations.csv', guess_max = 100000) %>%
+   filter(is.na(umi_fraction_filter) == F) %>% dplyr::select(Chr, POS, REF, ALT, GENE, donor, bc)
+
+colnames(mutations_cross)[c(6)] <- c('BL_ID')
+colnames(mutations_longi)[c(6)] <- c('Person')
+
+  # metadata:
+meta <- read_csv('./clustering_metadata_logNorm.csv', guess_max = 100000)
+meta$bc <- paste(substr(meta$barcode, 1,16), '-1', sep='')
+pheno <- read_csv('./pheno_assgnmnt_logNorm.csv')
+meta <- meta %>% inner_join(pheno)
+meta_basic_cross <- meta[,c(6,17)]
+meta_basic_longi <- meta[,c(3,17)]
+
+  # predictions:
+predictions <- read_csv('./4.3.0_MERF_MEEN_residuals_predictions.csv', guess_max = 100000) %>%
+  filter(model == 'MEEN')
+predictions_meta <- read_csv('./3.5.5_MEEN_glmnet_integrated_META_OneGrp_logNorm_parallel.csv', guess_max = 100000)
+predictions <- cbind(predictions[,2:5],predictions_meta$barcode) # <-- GET ERROR HERE
+
+  # read, umi, coverage information:
+read_cross <- read.csv('./mutations_cross.csv', header=FALSE)
+read_longi <- read.csv('./mutations_longi.csv', header=FALSE)
+
+colnames(read_cross) <- c("BL_ID", "bc", "reads_exome", "reads", "umi", "coverage_exome", "coverage")
+read_cross$bc <- str_extract(read_cross$bc, regex("[ACGT]+.*"))
+
+colnames(read_longi) <- c("Person", "bc", "reads_exome", "reads", "umi", "coverage_exome", "coverage")
+read_longi$bc <- str_extract(read_longi$bc, regex("[ACGT]+.*"))
+
+exome_cross <- read_csv('./donor_summary_cross.csv', guess_max = 100000)
+exome_longi <- read_csv('./donor_summary_longi.csv', guess_max = 100000)
+
+# Combine Studies:
+mut_cross <- mutations_cross %>% group_by(BL_ID,bc) %>% summarize(num_mut = n())
+mut_0 <- meta_basic_cross %>% left_join(mut_cross, by = c('BL_ID','bc'))
+mut_0$num_mut[is.na(mut_0$num_mut)] <- 0
+mut_cross_comb <- mut_0 %>% inner_join(read_cross, by = c('BL_ID','bc')) %>%
+  inner_join(exome_cross, by = c('BL_ID')) %>%
+  inner_join(meta, by = c('BL_ID', 'bc'))
+  
+mut_longi <- mutations_longi %>% mutate(Code = substr(Person, 1, 2)) %>% group_by(Code,Person,bc) %>% summarize(num_mut = n()) 
+mut_0 <- meta_basic_longi %>% left_join(mut_longi, by = c('Person','bc'))
+mut_0$num_mut[is.na(mut_0$num_mut)] <- 0
+mut_longi_comb <- mut_0  %>% inner_join(read_longi, by = c('Person','bc')) %>%
+  inner_join(exome_longi, by = c('Code')) %>%
+  inner_join(meta, by = c('Person', 'bc', 'Code'))
+
+mut_all <- bind_rows(mut_cross_comb, mut_longi_comb)
+write.csv(mut_all, './7.0.0_Mutations_number_new.csv', row.names = F)
+mut_all <- read_csv('./7.0.0_Mutations_number_new.csv', guess_max = 100000)
+
+# replace coverage and exome coverage with corrected data at 10X depth:
+new_coverage <- read_csv('./201127_alignment_bam_coverages_Jeffrey.csv')
+colnames(new_coverage)[1] <- "Code"
+})
+
+
+
+################################################
+
+mut_all <- mut_all %>% dplyr::select(-ex_coverage, -ex_coverage_exome) %>% inner_join(new_coverage, by = 'Code')
+
+# Diagnostic Plots:
+# Perform adjustments on log2 transformed data for all metrics
+mut_all$log2_mut <- 0
+mut_all$norm_mut <- 0
+mut_all$scale_mut <- 0
+adj_mut <- mut_all %>% filter(num_mut > 0)
+kept_mut <- mut_all %>% filter(num_mut == 0)
+
+# Adjust values for mutation number
+adj_mut$log2_mut <- log2(adj_mut$num_mut+1)
+  
+# Plot these three: umi, coverage, ex_coverage
+# UMI:
+m.p <- ggplot(adj_mut, aes(x=umi, y=num_mut)) +
+  theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1, legend.position = 'none') +
+  geom_point(aes(color = study), size = 0.1) +
+  geom_smooth(method="glm.nb", se=TRUE, color = 'black') +
+  coord_cartesian(ylim = c(0, 35))
+print(m.p) 
+ggsave('./Sup7A_7.0.0_diagnostic_NB_RawRm0_UmiVsMutations.png', height = 45, width = 45, units = 'mm', dpi = 300)
+
+
+# Single Cell Coverage
+m.p <- ggplot(adj_mut, aes(x=coverage, y=num_mut)) +
+  theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1, legend.position = 'none') +
+  geom_point(aes(color = study), size = 0.1) +
+  geom_smooth(method="glm.nb", se=TRUE, color = 'black') +
+  coord_cartesian(ylim = c(0, 35))
+
+print(m.p) 
+ggsave('./Sup7B_7.0.0_diagnostic_NB_RawRm0_coverageVsMutations.png', height = 45, width = 45, units = 'mm', dpi = 300)
+
+
+# Exome Coverage
+m.p <- ggplot(adj_mut, aes(x=ex_coverage, y=num_mut)) +
+  theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1, legend.position = 'none') +
+  geom_point(aes(color = study), size = 0.1) +
+  geom_smooth(method="glm.nb", se=TRUE, color = 'black') +
+  coord_cartesian(ylim = c(0, 35))
+
+print(m.p) 
+ggsave('./Sup7C_7.0.0_diagnostic_NB_RawRm0_ExomecoverageVsMutations.png', height = 45, width = 45, units = 'mm', dpi = 300)
+
+
+
+summary(glm.nb(num_mut ~ coverage, data=adj_mut))
+# Negative Binomial regression:
+adj_mut <- adj_mut[is.na(adj_mut$umi)==FALSE,]
+
+suppressWarnings({
+nbGLM <- glm.nb(log2_mut ~ umi + coverage + ex_coverage, data=adj_mut)
+})
+
+adj_mut$norm_mut = (nbGLM$residuals + nbGLM[["coefficients"]][["(Intercept)"]])
+
+# Normalize to 0 to 1:
+adj_quantile <- quantile(adj_mut$norm_mut, probs = c(0.001,0.999))
+adj_mut[adj_mut$norm_mut < min(adj_quantile),]$norm_mut <- min(adj_quantile)
+adj_mut[adj_mut$norm_mut > max(adj_quantile),]$norm_mut <- max(adj_quantile)
+value <- adj_mut$norm_mut
+adj_mut$scale_mut <- (value - min(value)) / (max(value) - min(value)) * max(adj_mut$num_mut) 
+
+library(plotly)
+library(plot3D)
+library(RColorBrewer)
+
+# Sup fig 7D
+# Save from notebook output in conxole bwlow chunk:
+# Right clich picture --> 'save as image'
+print(scatter3D(z=adj_mut$coverage, y=adj_mut$umi, x=adj_mut$ex_coverage, 
+        type="scatter3d", bty = "g", theta = 35, phi = 25,
+        colvar=adj_mut$num_mut, size = 0.01, col = brewer.pal(10, 'RdBu')[c(1:2,7:9,10,10,10)]))
+
+# Sup fig 7E
+# Save from notebook output in conxole bwlow chunk:
+# Right clich picture --> 'save as image'
+print(scatter3D(z=adj_mut$coverage, y=adj_mut$umi, x=adj_mut$ex_coverage, 
+        type="scatter3d", bty = "g", theta = 35, phi = 25,
+        colvar=adj_mut$scale_mut, size = 0.01, col = brewer.pal(10, 'RdBu')[c(1:2,7:9,10,10,10)]))
+
+summary(glm.nb(data = adj_mut, scale_mut ~ umi + coverage + ex_coverage))
+
+mut_all <- rbind(adj_mut, kept_mut)
+
+# log2 transform to better approximate a normal distribution:
+write.csv(mut_all, './7.0.0_Mutations_normalized_lmAdjusted_rm0.csv', row.names = F)
+
+```
+
+```{r Figure6}
+# 7.1.0_ageChange_2
+rm(list=ls())
+library(lme4)
+library(broom.mixed)
+library(lmerTest)
+library(tidyverse)
+library(MuMIn)
+
+# Load Mutations Data:
+
+mut_all <- read_csv('./7.0.0_Mutations_normalized_lmAdjusted_rm0.csv', guess_max = 100000) %>% 
+  filter(cell == 'CD8')
+
+predictions <- read_csv('./7.0.0_Mutations_predictions.csv')
+mut_all <- mut_all %>% inner_join(predictions, by = 'barcode')
+# Show Relationship to Age:
+
+colors <- tibble(subset = c('N','CM','EM','RA'), color = c('forestgreen','dodgerblue3','orangered','purple3'))
+
+# Filter unnecessary cells:
+mut_all <- mut_all %>% filter(Age > 5, subset != 'EFF')
+mut_all$Group <- substr(mut_all$Code, 1, 2)
+mut_all$prediction_add <- mut_all$prediction + mut_all$bi
+
+# Age vs Predicted Age by subsets:
+
+mut_all$subset <- factor(mut_all$subset, levels = colors$subset)
+m.p<-ggplot(mut_all, aes(x=Age,y=prediction_add)) +
+  theme_minimal() + theme_bw(base_size=7) + theme(aspect.ratio = 1) +
+  geom_smooth(method = 'lm', aes(group = subset, color = subset), se = F) +
+  scale_color_manual(values = colors$color) +
+  coord_cartesian(xlim = c(20,90), ylim = c(20,90)) +
+  scale_x_continuous(breaks = seq(20,90,10)) +
+  scale_y_continuous(breaks = seq(20,90,10))
+ggsave("fig1d.png")
+print(m.p)
+# mixed effect line:
+final <- tibble()
+for (i in unique(mut_all$subset)) {
+  mut_sub <- mut_all[mut_all$subset == i,]
+  model <- lmer(prediction_add~Age + (1|Group), REML = T, mut_sub) # This is the actual linear model generated, change this to preferred model if necessary
+  #summary(model)
+  sum_test <- step(model,reduce.fixed = FALSE, reduce.random = FALSE)
+  summary <- broom.mixed::tidy(model)
+  summary2 <- broom.mixed::augment(model)
+  age_p <- sum_test[["fixed"]][["Pr(>F)"]][[1]]
+  co <- as.numeric(summary[2,4])
+  intercept <- as.numeric(summary[1,4])
+  add <- tibble(subset = i, age_p = age_p, co = co, intercept = intercept)
+  final <- bind_rows(final, add)
+}
+write.csv(final, './7.1.0_Mutations_AgeVsPredictedAge_subset_ME.csv', row.names = F)
+
+
+# Plot positive cells for their Expression Across Age:
+# plot log2 and raw data
+# Age and Predicted Age
+
+pos_mut <- mut_all %>% filter(num_mut > 0)
+
+# generate line:
+final <- tibble()
+for (i in unique(mut_all$subset)) {
+  mut_sub <- pos_mut[pos_mut$subset == i,]
+  model <- lm(scale_mut~prediction_add, mut_sub)
+  #summary(model)
+  cor <- cor(mut_sub$scale_mut, mut_sub$prediction_add)
+  sum_test <- summary(model)
+  age_p <- sum_test[["coefficients"]][2,4]
+  co <- sum_test[["coefficients"]][2,1]
+  intercept <- sum_test[["coefficients"]][1,1]
+  add <- tibble(subset = i, age_p = age_p, co = co, intercept = intercept, cor = cor)
+  final <- bind_rows(final, add)
+}
+write.csv(final, './7.1.0_log2ScalePosNumMutationsVsPredictedAge_subset_LM_RawRm0NB.csv', row.names = F)
+
+final$subset <- factor(final$subset, levels = colors$subset)
+m.p<-ggplot(pos_mut, aes(x=prediction_add, y=scale_mut)) +
+  theme_minimal() + theme_bw(base_size = 7) + theme(aspect.ratio = 1) +
+  geom_point(alpha = 0) +
+  #geom_boxplot(aes(fill = factor(Age))) +
+  geom_abline(data = final, aes(slope = co, intercept = intercept, color = subset)) +
+  coord_cartesian(xlim = c(20,90), ylim = c(9,15)) +
+  scale_x_continuous(breaks = seq(20,90,10)) +
+  scale_color_manual(values = colors$color) +
+  scale_y_continuous(breaks = seq(7,20,1))
+ggsave("fig4e.png")
+print(m.p)
+write.csv(pos_mut, "fig4e_pos_mut.csv")
+```

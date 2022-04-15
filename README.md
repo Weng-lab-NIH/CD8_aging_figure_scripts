@@ -1,4 +1,4 @@
-# CD8 T Cell Aging in Healthy Individuals single-cell RNA analysis
+# CD8 T cell aging in healthy individuals single-cell RNA analysis
 From Raheel
 These R notebooks contains all the analysis done for the single-cell data, starting from CellRanger output and going upto the final generation of each single-cell figure. 
 
@@ -8,8 +8,10 @@ The **preprocessing** notebook contains code for reading cellranger output, filt
 
 **Notebook 2** contains code for generating linear models examining how the 9 CD8 subpopulations change over time, creating an expression heatmap for the 50 most-changed genes by age, and creating a network plot of functional changes associated with age and associated genes for Figure 2.
 
-**Notebook 3** contains code for statistically testing whether genes are changing in number of expressing cells and/or average expression level per cell, and plotting representative examples. It also contains code for gene set enrichment analysis (GSEA), and the corresponding bubble plot for Figures 3 and 4.
+**Notebook 3_4** contains code for statistically testing whether genes are changing in number of expressing cells and/or average expression level per cell, and plotting representative examples. It also contains code for gene set enrichment analysis (GSEA), and the corresponding bubble plots for Figures 3 and 4.
 
-**Notebook 4** contains code for plotting the results of our age-prediction machine learning model on our training data, our validiation data, and an external test dataset for Figure 5. It also contains code for plotting the result of our mutation burden analysis (Figure 6), and the results of applying the age-predicition model to CD8+ T-Cells from HIV patients as well as CAR T Cells. 
+**Notebook 5** contains code for both ******training****** and plotting the results of our age-prediction machine learning model on our training data, our validiation data, and an external test dataset for Figure 5. 
 
+**Notebook 6** compares the predicted ages of each CD8 T cell subset with chronological age, as well as mutation burden. Mutation burden was calculated using the [USCMD](https://github.com/Weng-lab-NIH/USCMD) method. 
 
+**Notebook 7** Calculates the results of applying the age-prediction model to CD8+ T cells from HIV patients as well as CAR T Cells. 

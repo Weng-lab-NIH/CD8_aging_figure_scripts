@@ -1,4 +1,4 @@
-# CD8_aging_figure_scripts
+# CD8 T Cell Aging in Healthy Individuals single-cell RNA analysis
 From Raheel
 These R notebooks contains all the analysis done for the single-cell data, starting from CellRanger output and going upto the final generation of each single-cell figure. 
 

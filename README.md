@@ -1,4 +1,4 @@
-# CD8 T cell aging in healthy individuals single-cell RNA analysis
+# Single-cell RNA analysis of CD8 T cell aging in healthy individuals
 These R notebooks contains all the analysis done for the single-cell data, starting from CellRanger output and going upto the final generation of each single-cell figure. 
 
 The **preprocessing** notebook contains code for reading cellranger output, filtering, normalizing, integrating, and clustering.

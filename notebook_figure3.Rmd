@@ -24,37 +24,24 @@ library(clusterProfiler)
 source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/regression_functions.R')
 source('/data/TCR/__SCRIPTS_Raheel/scripts-Project_Independent/matrix_functions.R')
 source('/data/TCR/hemanihh/figure_scripts/read_chunks.R')
-
-# Data Repo
-working_directory <- './data-repo/'
-setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
-#setwd(working_directory)
-
 ```
 
 ```{r Figure3A_analysis}
-# VERSION: 7.0.2_regression_ModesOfChange_integrated_logNorm_examples; PREVIOUS: ; STEP: Figure3
-# 1) Parse single-cell counts and metadata
-# 2) Plot tSNE projection
-#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
 ptm <- proc.time() # Start the clock!
 
 # LOAD DATA:
 version <- "7.0.2"
-setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
 pbmc_counts <- Read10X('/data/TCR/10X_Genomics/data/interim/10X_PIPELINE_P1_P4/GEX/aggr_CR4-0-0_crossLongCombined_noNormalize/outs/filtered_feature_bc_matrix')
-pbmc_data <- readRDS('./data/tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+pbmc_data <- readRDS('./batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
 
-pheno <- read_csv('./data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
-info <- read_csv('./data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000)
+pheno <- read_csv('./pheno_assgnmnt_logNorm.csv')
+info <- read_csv('./clustering_metadata_logNorm.csv', guess_max = 100000)
 info <- info %>% inner_join(pheno, by = 'cluster')
 info <- info %>% filter(BC_ID != 1 & info$BC_ID != 2 & cluster != 6  & cell == 'CD8')
 
 clusters <- info %>% inner_join(pheno, by = 'cluster')
 
-#regression.cluster <- read_csv('./data/interim/regression/5.0.5_regression_10perc_01FDR_logNorm_OneGrp.csv', guess_max = 10000)
-regression.subset <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_subset.csv')
-#regression.cell <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_cell.csv')
+regression.subset <- read_csv('./5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_subset.csv')
 
 t_exptotall <- 10
 t_exptotal <- log2(1 + (t_exptotall/100))/70
@@ -64,11 +51,7 @@ t_ptotal   <- 0.05
 ###### Calculate Types of Change ######
 #######################################
 
-# Regress the Modes:
-#modes.of.change.cluster <- Calculate_ModesOfChange(pbmc_counts,clusters,'cluster',0.1,regression.cluster,t_ptotal,t_exptotal,'cell',29)
 
-#regression.filter <- #read_csv('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/interim/regression/5.0.5_regression_10perc_01FDR_logNorm_OneGrp.csv', guess_max = 10000)
-#regression.filter <- regression.cell %>% filter(age_p_adj < t_ptotal, abs(co) > t_exptotal)
 regression.filter <- regression.subset %>% filter(gene %in% c('GZMA','B2M','S100A4'))
 
 matrix <- pbmc_data
@@ -81,9 +64,6 @@ p_value <- t_ptotal
 fold_change <- t_exptotal
 regression_level <- 'cell'
 n_cores <- 2
-# modes.of.change.cluster <- Calculate_ModesOfChange_MixedEffect(pbmc_data, pbmc_counts, info,
-#                                                                'cluster', 0, regression.filter,t_ptotal,
-#                                                                t_exptotal, 'cell', 1)
 require(doParallel)
   require(parallel)
   require(foreach)
@@ -292,9 +272,7 @@ print(colnames(modes.of.change.subset))
 #modes.of.change.cell <- Calculate_ModesOfChange(pbmc_counts,clusters,'cell',0.1,regression.cell,t_ptotal,t_exptotal,'cell',29)
 
 # Score the modes:
-#score.cluster <- Score_Modes(modes.of.change.cluster, 0.05, 0.05)
 score.subset <- Score_Modes(modes.of.change.subset, 0.05, 0.05)
-#score.cell <- Score_Modes(modes.of.change.cell[[1]], 0.05, 0.05)
 
 # Plot to check:
 ggplot(score.subset, aes(x=`co.x`, y=exp_percent)) +
@@ -313,25 +291,21 @@ proc.time() - ptm # Stop the clock
 
 ```{r Figure3A}
 # VERSION: fig.3.a_integrated_logNorm; PREVIOUS: 7.0.2_regression_ModesOfChange_integrated_logNorm_examples; STEP: Figure3
-# 1) Parse single-cell counts and metadata
-# 2) Plot tSNE projection
-#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
 ptm <- proc.time() # Start the clock!
 
 # LOAD DATA:
-setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
 pbmc_counts <- Read10X('/data/TCR/10X_Genomics/data/interim/10X_PIPELINE_P1_P4/GEX/aggr_CR4-0-0_crossLongCombined_noNormalize/outs/filtered_feature_bc_matrix')
-data <- readRDS('./data/tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
-clusters <- read_csv('./data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000)
-pheno <- read_csv('./data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
+data <- readRDS('./batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
+clusters <- read_csv('./clustering_metadata_logNorm.csv', guess_max = 100000)
+pheno <- read_csv('./pheno_assgnmnt_logNorm.csv')
 clusters <- clusters %>% inner_join(pheno)
 
-regression <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_subset.csv')
+regression <- read_csv('./5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_subset.csv')
 regression$age_p_adj <- p.adjust(regression$age_p, method = 'BH')
 #regression <- regression %>% filter(age_p_adj < 0.05, abs(co) > log2(1.1)/70)
   
-mode.regression <- read_csv('/data/TCR/hemanihh/figure_scripts/fig3_out/7.0.2_Regression_RegressionValues10_0.05.subset_logNorm_integrated.csv')
-mode.values <-read_csv('/data/TCR/hemanihh/figure_scripts/fig3_out/7.0.2_Regression_RegressionData10_0.05.subset_logNorm_integrated.csv')
+mode.regression <- read_csv('7.0.2_Regression_RegressionValues10_0.05.subset_logNorm_integrated.csv')
+mode.values <-read_csv('7.0.2_Regression_RegressionData10_0.05.subset_logNorm_integrated.csv')
 
 cd8_cells <- clusters %>% filter(Age > 5, cell == 'CD8')
 
@@ -462,7 +436,7 @@ ptm <- proc.time() # Start the clock!
 setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
 pbmc_counts <- Read10X('/data/TCR/10X_Genomics/data/interim/10X_PIPELINE_P1_P4/GEX/aggr_CR4-0-0_crossLongCombined_noNormalize/outs/filtered_feature_bc_matrix')
 pbmc_data <- readRDS('./data/tidy/P1_P4_noNormalize/batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
-#regression_fltr <- 
+
 pheno <- read_csv('./data/tidy/P1_P4_noNormalize/pheno_assgnmnt_logNorm.csv')
 info <- read_csv('./data/tidy/P1_P4_noNormalize/clustering_metadata_logNorm.csv', guess_max = 100000)
 info <- info %>% inner_join(pheno, by = 'cluster')
@@ -470,9 +444,6 @@ info <- info %>% filter(BC_ID != 1 & info$BC_ID != 2 & cluster != 6  & cell == '
 
 clusters <- info %>% inner_join(pheno, by = 'cluster')
 
-#regression.cluster <- read_csv('./data/interim/regression/5.0.5_regression_10perc_01FDR_logNorm_OneGrp.csv', guess_max = 10000)
-#regression.subset <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_subset.csv')
-#regression.cell <- read_csv('./data/interim/regression/5.0.5_regression_CD8_Cluster_ME_Int_OneGrp_logNorm_cell.csv')
 regression.cluster <- Read_chunks_csv('./data/interim/regression/5.0.6_ME_Int_OneGrp_logNorm_AllStats_scripts_saveChunks_cluster')
 regression.cluster <- regression.cluster %>% group_by(cluster) %>% mutate(age_p_adj = p.adjust(age_p, method = 'BH'))
 
@@ -487,7 +458,6 @@ t_ptotal   <- 0.05
 # Regress the Modes:
 #modes.of.change.cluster <- Calculate_ModesOfChange(pbmc_counts,clusters,'cluster',0.1,regression.cluster,t_ptotal,t_exptotal,'cell',29)
 
-#regression.filter <- #read_csv('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2/data/interim/regression/5.0.5_regression_10perc_01FDR_logNorm_OneGrp.csv', guess_max = 10000)
 regression.filter <- regression.cluster %>% filter(age_p_adj < t_ptotal, abs(co) > t_exptotal)
 
 matrix <- pbmc_data
@@ -501,15 +471,6 @@ fold_change <- t_exptotal
 regression_level <- 'cell'
 n_cores <- 1
 
-# modes.of.change.cluster <- Calculate_ModesOfChange_MixedEffect(pbmc_data, pbmc_counts, info,
-#                                                                'cluster', 0, regression.filter,t_ptotal,
-#                                                                t_exptotal, 'cell', 1)
-
-# Calculate_ModesOfChange_MixedEffect <- function(matrix, matrix_counts, metadata, cluster_level, 
-#                                                 threshold, regression, p_value, fold_change, 
-#                                                 regression_level, n_cores) {
-#   
-  
   print('clusters: dataframe
         column 1 - \'barcode\',
         column 2 - \'cluster\'
@@ -529,19 +490,7 @@ n_cores <- 1
   library(lme4)
   library(broom.mixed)
   library(lmerTest)
-  
-  # cl <- makeCluster(n_cores)
-  # clusterExport(cl, c("Generate_Regression_Report"))
-  # registerDoParallel(cl, cores = n_cores)
-  
-  #matrix <- pbmc_counts
-  #metadata <- clusters
-  #cluster_level <- 'cluster'
-  #threshold <- 0.1
-  #regression <- regression.cluster
-  #p_value <- t_ptotal
-  #fold_change <- t_exptotal
-  
+   
   clust <- unique(metadata[,colnames(metadata) == cluster_level])
   clust <- clust[[1]]
   clust <- clust[is.na(clust) == F]
@@ -557,12 +506,7 @@ n_cores <- 1
     
     cluster.exp.mat <- matrix[,cluster.cells]
     cluster.count.mat <- matrix_counts[,cluster.cells]
-    
-    # comb <- function(...) {
-    #   mapply('rbind', ..., SIMPLIFY=FALSE)
-    # }
-    
-    #listcl <- foreach (i=1:length(cluster.top.genes), .packages='tidyverse', .combine='comb', .multicombine = T) %dopar% {
+       
     for ( i in c(1:length(cluster.top.genes))) {
       gene <- cluster.top.genes[i]
       expression.vector <- as.vector(cluster.exp.mat[as.character(gene),])
@@ -584,9 +528,6 @@ n_cores <- 1
           summarise(norm = sum(counts > threshold)/n())
         test1.percents$norm <- test1.percents$norm*100
         test1.percents$mixed <- substr(test1.percents$Code, 1, 2)
-        # model.1 <- lm(norm ~ Age, data = test1.percents)
-        # regression.1.summary <- Generate_Regression_Report(model.1, gene, l) %>% mutate(mode = 'percent')
-        # 
         #############
         model.1 <- lmer(norm~Age + (1|mixed) + Sex, REML = T, test1.percents) # This is the actual linear model generated, change this to preferred model if necessary
         #summary(model)
@@ -676,17 +617,12 @@ n_cores <- 1
   }
   
   data_list <- list(dfin, dfin2)
-  #return(data_list)
-#}
 
 
-#modes.of.change.subset <- Calculate_ModesOfChange(pbmc_counts,clusters,'subset',0.1,regression.subset,t_ptotal,t_exptotal,'cell',29)
-#modes.of.change.cell <- Calculate_ModesOfChange(pbmc_counts,clusters,'cell',0.1,regression.cell,t_ptotal,t_exptotal,'cell',29)
+
 
 # Score the modes:
-#score.cluster <- Score_Modes(modes.of.change.cluster, 0.05, 0.05)
 score.subset <- Score_Modes(dfin, 0.05, 0.05)
-#score.cell <- Score_Modes(modes.of.change.cell[[1]], 0.05, 0.05)
 
 # Plot to check:
 ggplot(score.subset, aes(x=`co.x`, y=exp_percent)) +
@@ -697,14 +633,14 @@ ggplot(score.subset, aes(x=`co.x`, y=exp_percent)) +
 version <- "7.0.2"
 # # Save Data:
 # 
-write.csv(score.subset, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.cell_logNorm_integrated.csv', sep = ''), row.names = F)
-write.csv(dfin2, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.cell_logNorm_integrated.csv', sep = ''), row.names = F)
+write.csv(score.subset, paste('./',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.cell_logNorm_integrated.csv', sep = ''), row.names = F)
+write.csv(dfin2, paste('./',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.cell_logNorm_integrated.csv', sep = ''), row.names = F)
 
-# write.csv(score.subset, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.subset.csv', sep = ''), row.names = F)
-# write.csv(modes.of.change.subset[[2]], paste('./data/interim/regression/',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.subset.csv', sep = ''), row.names = F)
+# write.csv(score.subset, paste('/',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.subset.csv', sep = ''), row.names = F)
+# write.csv(modes.of.change.subset[[2]], paste('./',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.subset.csv', sep = ''), row.names = F)
 # 
-# write.csv(score.cell, paste('./data/interim/regression/',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.cell.csv', sep = ''), row.names = F)
-# write.csv(modes.of.change.cell[[2]], paste('./data/interim/regression/',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.cell.csv', sep = ''), row.names = F)
+# write.csv(score.cell, paste('./',version,'_Regression_RegressionValues',t_exptotall,'_',t_ptotal,'.cell.csv', sep = ''), row.names = F)
+# write.csv(modes.of.change.cell[[2]], paste('./',version,'_Regression_RegressionData',t_exptotall,'_',t_ptotal,'.cell.csv', sep = ''), row.names = F)
 
 # Functions: 
 # 
@@ -714,18 +650,11 @@ write.csv(dfin2, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/'
 
 ```{r Figur3B}
 # VERSION: fig.3.b_integrated_logNorm; PREVIOUS: fig.3.a_integrated_logNorm; STEP: Figure3
-# 1) Parse single-cell counts and metadata
-# 2) Plot tSNE projection
-#SEURAT TUTORIAL: https://satijalab.org/seurat/v3.1/pbmc3k_tutorial.html
 ptm <- proc.time() # Start the clock!
 
 # LOAD DATA:
-
-
 version <- 'fig.3.b'
 
-# set directories:
-setwd('/gpfs/gsfs5/users/TCR/10X_Genomics/scRNAseq_P1_HUMAN_GEX_V2')
 
 # Load data:
 t_exptotall <- 10
@@ -788,7 +717,6 @@ ggplot(modes.data.rescore, aes(x = percent, y = expression, color = cluster)) +
   #scale_color_manual(values = c("N" = "forestgreen", "CM" = "dodgerblue3", "EM" = "Red3", "RA" = "purple3")) +
   theme(panel.grid.minor = element_blank()) #+ #, panel.grid.minor = element_blank()) #+
   #scale_x_log10(breaks = c(10,25,100,250,500))
-#geom_text(data = modes.data.rescore[modes.data.rescore$co.x < 0 & modes.data.rescore$co.y < 0,], aes(label=gene),hjust=1, vjust=0)
 ggsave(paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'.0_ScatterPlot_ModesOfChangeUpregulated_Remove<5.',t_exptotall,'.',t_ptotal,'.cut5.incNone.incNA.png',sep=''), height = 8, width = 12, units = 'in',dpi = 600)
 
 
@@ -836,10 +764,6 @@ genes_up <- regression %>% filter(co > 0)
 # transform variables to percentages
 modes.data <- modes.data %>% filter(cluster %in% c('N','CM','EM','RA'))
 modes.data <- modes.data %>% mutate(percent = co.x*70, expression = 100*(2^(co.y*70) - 1))
-# For Division by lines:
-# modes.data.rescore <- modes.data %>% 
-#   mutate(type_new = ifelse(expression < percent*(1 / sqrt(3)), 'percent', ifelse(expression > percent*sqrt(3), 'expression', 'both'))) %>%
-#   filter(gene %in% genes_up) %>% filter(percent > 0 | expression > 0)
 modes.data.rescore <- modes.data %>% 
   mutate(type_new = ifelse(expression > 5 & percent < 5, 'expression', ifelse(expression < 5 & percent > 5, 'percent', ifelse(expression >= 5 & percent >= 5, 'both', 'none')))) %>%
   inner_join(genes_up, by = c('cluster','gene')) %>% filter(percent > 5 | expression > 5) %>% filter(type_new != 'none')
@@ -912,7 +836,7 @@ df_match_expression <- df_matches %>% dplyr::select(mode, cluster, ID, mode_leng
 df_match_all <- inner_join(df_match_both, df_match_percent, by = c('cluster','ID')) %>% inner_join(df_match_expression, by = c('cluster','ID'))
 
 gsea_split_all <- gsea_combine %>% inner_join(df_match_all, by = c('cluster','ID'))
-write.csv(gsea_split_all, paste('/gpfs/gsfs5/users/TCR/hemanihh/figure_scripts/fig3_out/',version,'_Modes_GSEAModesEnrichment_integrated_logNorm_subsets_10perc.csv',sep=''))
+write.csv(gsea_split_all, paste('./',version,'_Modes_GSEAModesEnrichment_integrated_logNorm_subsets_10perc.csv',sep=''))
 
 # Isolate Most Enriched Increasing Results for each Mode:
 final_isolates <- tibble()
@@ -935,27 +859,6 @@ for (subset in c('N','CM','EM','RA')) {
     }
   }
 }
-
-# Enrich the Second way: (add 'both' genes to the other categories)
-# gsea_mod <- gsea_split_all %>% mutate(mode_comb = overlap.y + overlap, enrich_sum = enrichment.x + enrichment.y + enrichment + enrichment.x) %>% 
-#   mutate(p_perc = (enrichment.y + enrichment.x) / enrich_sum, e_perc = (enrichment + enrichment.x) / enrich_sum, b_perc = (enrichment.x + enrichment.x) / enrich_sum)
-# for (subset in c('N','CM','EM','RA')) {
-#   for (mode in c('both', 'percent', 'expression')) {
-#     isolate <- gsea_mod %>% filter(cluster == subset & NES > 0 & qvalues < 0.1)
-#     if (mode == 'both') {
-#       isolate <- isolate %>% filter(overlap.x > 1 & p_perc < 0.6 & e_perc < 0.6) #%>% top_n(10, wt = dplyr::desc(mode_comb))
-#     } else if (mode == 'percent') {
-#       isolate <- isolate %>% filter(overlap.y > 1 & p_perc > 0.6) #& overlap.x == 0 & overlap == 0)
-#     } else if (mode == 'expression') {
-#       isolate <- isolate %>% filter(overlap > 1 & e_perc > 0.6) #& overlap.x == 0 & overlap.y == 0)
-#     }
-#     
-#     if (nrow(isolate) > 0) {
-#       isolate$mode_enriched <- mode
-#       final_isolates <- rbind(final_isolates, isolate)
-#     }
-#   }
-# }
 
 summary_isolates <- final_isolates %>% group_by(cluster, mode_enriched) %>% summarize(n())
 summary_overlap_all <- final_isolates %>% group_by(ID,Description,mode_enriched) %>% summarize(num = n())

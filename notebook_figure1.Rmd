@@ -8,7 +8,7 @@ output: html_notebook
 rm(list = ls())
 library(knitr)
 knitr::opts_chunk$set(echo = TRUE)
-working_directory <- './data-repo/'
+working_directory <- "./"
 knitr::knit_engines$set(python = reticulate::eng_python)
 
 # R libraries
@@ -68,7 +68,8 @@ ptm <- proc.time() # Start the clock!
 
 # LOAD DATA:
 
-pbmc <- readRDS("./batchCorrected_matrix_clusterFltr_logNorm_log2.Rds") 
+pbmc <- readRDS('./unintegrated_p1p4_log2mat.Rds') 
+pheno_df <- read_csv('./pheno_assgnmnt_logNorm.csv', guess_max = 100000)
 meta <- tibble(barcode = colnames(pbmc)) %>% 
                  inner_join(read_csv("./clustering_metadata_logNorm.csv", guess_max = 100000), by = "barcode") %>% 
   inner_join(read_csv("./pheno_assgnmnt_logNorm.csv", guess_max = 100000), by = "cluster") %>%
@@ -82,16 +83,29 @@ ident_new <- meta$cluster
 names(ident_new) <- meta$barcode
 Idents(pbmc) <- ident_new
 
-# Perform Differential Expression:
+#Perform Differential Expression:
 pbmc.markers <- FindAllMarkers(object = pbmc, only.pos = TRUE, min.pct = 0, logfc.threshold = 0.01, return.thresh = 1, test.use = "t")
 warnings()
-file_out <- "./21.5.0_Dataframe_DifferentialExpression_BatchCorrected_CD8_Ttest_logNorm.csv"
+file_out <- "./diff_exp_unintegrated_log2fc.csv"
 write.table(pbmc.markers, file_out, sep = ",", col.names = !file.exists(file_out), append = T, row.names = F)
+
+# Plot manually selected Differentially Expressed Genes
+pheno_vec <- tibble(cluster=ident_new) %>% 
+  left_join(pheno_df) %>%
+  pull(pheno)
+pheno_fac <- factor(pheno_vec, levels=pheno_df$pheno)
+Idents(pbmc) <- pheno_fac
+gene_df <- read.csv("./cd8_fig1c_gene_list_2022_04_18.csv")
+genes <- gene_df$gene
+DotPlot(pbmc, features=unique(genes), cols=c("blue", "red")) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    scale_y_discrete(limits=rev)
+  
+ggsave("./diff_exp_dotplot_unintegrated.png", width=11.5, height=3.5)
 
 print('script 21.5.0 time: ')
 proc.time() - ptm # Stop the clock
 ```
-
 
 ```{r Figure1C}
 # VERSION: a.1.0_Heatmap_DifferentialExpression; PREVIOUS: ; STEP: Figure1
@@ -99,18 +113,18 @@ proc.time() - ptm # Stop the clock
 # 2) Filter dataset for selected differentially expressed genes
 # 3) rearrange cells by cluster, then age
 # 4) SAVE data
-version <- 'a.1.0'
 ptm <- proc.time() # Start the clock!
 
 # Note: Final Heatmap plotted in JMP program (SAS) from data matrix outputted in this script
 
 # LOAD DATA:
 
-df <- read_csv('./clustering_metadata_logNorm.csv', guess_max = 100000)
 pheno <- read_csv('./pheno_assgnmnt_logNorm.csv', guess_max = 100000)
-expression_mat <- readRDS('./batchCorrected_matrix_clusterFltr_logNorm_log2.Rds')
-# genes <- scan('./data/external/210313_HeatmapGenes_Fig1', what='')
-genes <- scan('./3.2.0_GeneUsed_genesCell_sd_avgExp_less.txt', what='')
+expression_mat <- readRDS('unintegrated_p1p4_log2mat.Rds') 
+genes <- read.csv("./cd8_fig1c_gene_list_2022_04_18.csv") %>% pull(gene)
+
+df <- tibble(barcode = colnames(expression_mat)) %>% 
+                 inner_join(read_csv("./clustering_metadata_logNorm.csv", guess_max = 100000), by = "barcode")
 
 gene_len <- length(genes)
 
@@ -138,8 +152,8 @@ heat_mat_2 <- t(heat_mat)
 
 # SAVE data
 
-write.table(heat_mat_2, paste('./',version,'_Matrix_ChosenDiffExp.Ordered_scaled_integrated_logNorm_031321.txt',sep=''))
-write.csv(heat_mat_2, paste('./',version,'_Matrix_ChosenDiffExp.Ordered_integrated_logNorm_031321.csv',sep=''))
+write.table(heat_mat_2, paste('./Matrix_ChosenDiffExp.Ordered_scaled_unintegrated_logNorm_031321.txt',sep=''))
+write.csv(heat_mat_2, paste('./Matrix_ChosenDiffExp.Ordered_unintegrated_logNorm_031321.csv',sep=''))
 
 # Optional Code:
 # Plot bar for Colors: 
@@ -318,3 +332,49 @@ if __name__ == '__main__':
 
 ```
 
+```{r SuppTable3}
+
+df <- read.csv("diff_exp_unintegrated_log2fc.csv") %>%
+  filter(p_val_adj < 0.05, avg_log2FC > 0.5) %>%
+  distinct(cluster, gene, .keep_all=T)
+print(head(df))
+
+pbmc <- readRDS('./unintegrated_p1p4_log2mat.Rds') 
+pheno_df <- read_csv('./pheno_assgnmnt_logNorm.csv', guess_max = 100000) %>%
+  mutate(cluster=as.character(cluster))
+meta <- tibble(barcode = colnames(pbmc)) %>% 
+                 inner_join(read_csv("./clustering_metadata_logNorm.csv", guess_max = 100000), by = "barcode") %>% 
+  inner_join(read_csv("./pheno_assgnmnt_logNorm.csv", guess_max = 100000), by = "cluster") %>%
+  filter(cell == "CD8")
+
+# Create Seurat Object and Assign Clusters
+pbmc <- pbmc[,meta$barcode]
+pbmc <- CreateSeuratObject(pbmc)
+ident_new <- meta$cluster
+names(ident_new) <- meta$barcode
+Idents(pbmc) <- ident_new
+
+avg_exp_all <- AverageExpression(pbmc, features = df$gene) 
+gene_vec <- rownames(avg_exp_all$RNA)
+avg_exp_all <- as.data.frame(avg_exp_all)
+avg_exp_all$gene <- gene_vec
+
+avg_exp_long <- avg_exp_all %>% 
+  pivot_longer(!gene, names_to = "cluster", values_to="avg_exp") %>%
+  mutate(cluster = str_replace(cluster, "RNA.", ""))
+
+joined_df <- mutate(df, cluster=as.character(cluster)) %>%
+  left_join(avg_exp_long, by=c("gene", "cluster")) %>%
+  left_join(select(pheno_df,cluster,pheno)) %>%
+  filter(avg_exp>0.5) %>%
+  mutate(pheno=factor(pheno, levels=pheno_df$pheno)) %>%
+  arrange(pheno) %>%
+  select(gene, p_val_adj, avg_log2FC, avg_exp, pheno) %>%
+  pivot_wider(names_from=pheno, values_from = c(p_val_adj, avg_log2FC, avg_exp),
+              names_glue="{pheno}_{.value}") 
+joined_df <- joined_df %>%
+  select(order(colnames(joined_df))) %>%
+  select(gene, everything())
+write.csv(joined_df, "sup_table_3.csv", row.names=F)
+
+```

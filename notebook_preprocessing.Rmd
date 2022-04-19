@@ -141,6 +141,43 @@ print('script 0.2.0 time: ')
 proc.time() - ptm # Stop the clock
 ```
 
+```{r unintegrated_obj}
+# Create an unintegrated seurat object to be used for differential expression
+
+set.seed(1)
+aggr_directory <- './aggr_CR4-0-0_crossLongCombined_noNormalize/'
+
+# LOAD DATA:
+# Load Counts:
+data <- Read10X(paste(aggr_directory,"outs/filtered_feature_bc_matrix/",sep=''))
+
+# Load Metadata:
+decom_meta_hash <- read_csv('./HTO_df_meta_fltr.csv', guess_max = 100000)
+decom_meta_hash$barcode <- paste(decom_meta_hash$barcode, decom_meta_hash$BC_ID, sep='-')
+
+barcodes <- decom_meta_hash$barcode
+genes <- scan('./3.2.0_GeneUsed_genesCell_sd_avgExp_less.txt', what = '') # Note: To reduce computational load, chosen genes meet the following criteria in both datasets integrated: 1) Expressed by more than 100 cells; 2) Have a standard deviation more than 0.1; 3) Expressed on average with more than 0.005 UMI counts/cell
+
+data_n <- data[genes,barcodes]
+info <- as.data.frame(decom_meta_hash)
+rownames(info) <- info$barcode
+
+# Prepare integration
+# Generate Seurat objects
+p1p4 <- CreateSeuratObject(data_n, meta.data = info)
+p1p4 <- NormalizeData(p1p4, verbose = T)
+p1p4 <- FindVariableFeatures(p1p4, verbose = T, nfeatures = 1000)
+
+p1p4 <- ScaleData(p1p4)
+# p1p4 <- RunPCA(object = p1p4, verbose = FALSE)
+# p1p4 <- RunUMAP(p1p4, reduction = "pca", dims = 1:30)
+
+# Save data in case of computational node failure
+saveRDS(p1p4, paste('./unintegrated_p1p4.Rds',sep=''))
+saveRDS(p1p4@assays$RNA@data/log(2), paste('./unintegrated_p1p4_log2mat.Rds',sep=''))
+
+```
+
 ```{r integration_step1}
 # VERSION: 21.0.2_Integration_CrossLongitudinalCD8; PREVIOUS: 0.2.0_preprocessing_HTOlibraries; STEP: preprocessing
 # 1) Parse metadata and sequencing libraries

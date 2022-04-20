@@ -1,6 +1,6 @@
 ---
 title: "Figure6"
-author: "Humza Hemani; Raheel R Ahmad"
+author: "Raheel R Ahmad"
 output: html_notebook
 ---
 
